@@ -94,7 +94,7 @@ AC_CHECK_DECL(PTHREAD_MUTEX_ERRORCHECK_NP, [AC_DEFINE(HAVE_ERR_MUTEX, 1, "Error 
 	[ #include <pthread.h> ])], [ #include <pthread.h> ])
 
 # Required Functions
-AC_CHECK_FUNCS([memset strerror malloc realloc getopt strchr tolower getaddrinfo], ,
+AC_CHECK_FUNCS([memset strerror malloc realloc getopt strchr tolower getaddrinfo usleep], ,
 	       [echo "ERROR: Required function missing"; exit 1])
 AC_CHECK_FUNCS([strlwr strlcat strlcpy strncat strncpy])
 

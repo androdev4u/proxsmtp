@@ -146,6 +146,7 @@ const char* g_directory = _PATH_TMP;        /* The directory for temp files */
 unsigned int g_unique_id = 0x00100000;      /* For connection ids */
 int g_bounce = 0;                           /* Send back a reject line */
 int g_quarantine = 0;                       /* Leave virus files in temp dir */
+int g_debugfiles = 0;                       /* Leave all files in temp dir */
 
 /* For main loop and signal handlers */
 int g_quit = 0;
@@ -199,7 +200,7 @@ int main(int argc, char* argv[])
     char* t;
 
     /* Parse the arguments nicely */
-    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:qt:")) != -1)
+    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:qt:vX")) != -1)
     {
         switch(ch)
         {
@@ -262,6 +263,17 @@ int main(int argc, char* argv[])
         /* Leave virus files in directory */
         case 'q':
             g_quarantine = 1;
+            break;
+
+        /* Print version number */
+        case 'v':
+            printf("clamsmtpd (version %s)\n", VERSION);
+            exit(0);
+            break;
+
+        /* Leave all files in the tmp directory */
+        case 'X':
+            g_debugfiles = 1;
             break;
 
         /* Usage information */
@@ -359,8 +371,9 @@ static void on_quit(int signal)
 
 static int usage()
 {
-    fprintf(stderr, "clamsmtpd [-bq] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
+    fprintf(stderr, "usage: clamsmtpd [-bq] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
             "[-l listenaddr] [-m maxconn] [-p pidfile] [-t timeout] serveraddr\n");
+    fprintf(stderr, "       clamsmtpd -v\n");
     exit(2);
 }
 
@@ -901,7 +914,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     };
 
 cleanup:
-    if(havefile)
+    if(havefile && !g_debugfiles)
     {
         messagex(ctx, LOG_DEBUG, "deleting temporary file: %s", buf);
         unlink(buf);
@@ -1332,7 +1345,7 @@ cleanup:
             close(sock);
 
         message(ctx, LOG_ERR, "couldn't connect to: %s", addrname);
-        RETURN(-1);
+        return -1;
     }
 
     ASSERT(sock != -1);

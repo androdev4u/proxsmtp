@@ -77,11 +77,11 @@ char* strupr(char* s);
 #endif
 
 #ifndef HAVE_STRLCAT
-void strlcat(char *dst, const char *src, size_t size);
+size_t strlcat(char *dst, const char *src, size_t size);
 #endif
 
 #ifndef HAVE_STRLCPY
-void strlcpy(char *dst, const char *src, size_t size);
+size_t strlcpy(char *dst, const char *src, size_t size);
 #endif
 
 #endif /* _COMPAT_H_ */

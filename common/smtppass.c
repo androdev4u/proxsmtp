@@ -857,7 +857,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     int r, ret = 0;
 
     strlcpy(buf, g_directory, MAXPATHLEN);
-    strlcat(buf, "/clamsmtp.XXXXXX", MAXPATHLEN);
+    strlcat(buf, "/clamsmtpd.XXXXXX", MAXPATHLEN);
 
     /* transfer_to_file deletes the temp file on failure */
     if((r = transfer_to_file(ctx, buf)) > 0)

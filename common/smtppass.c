@@ -176,7 +176,7 @@ static int connect_out(spctx_t* ctx);
 static int read_server_response(spctx_t* ctx);
 static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
-static int is_successful_rsp(const char* line);
+static const char* get_successful_rsp(const char* line);
 
 /* Used externally in some cases */
 int sp_parse_option(const char* name, const char* option);
@@ -649,8 +649,8 @@ static void* thread_main(void* arg)
         fd = thread->fd;
     sp_unlock();
 
-    ctx = init_thread(fd);
-    if(!ctx)
+    /* Sometimes we get to this point and then quit is noted */
+    if(sp_is_quit() || (ctx = init_thread(fd)) == NULL)
     {
         /* Special case. We don't have a context so clean up descriptor */
         close(fd);
@@ -776,6 +776,7 @@ static int connect_out(spctx_t* ctx)
 static int smtp_passthru(spctx_t* ctx)
 {
     char* t;
+    const char* p;
     int r, ret = 0;
     unsigned int mask;
     int neterror = 0;
@@ -789,7 +790,7 @@ static int smtp_passthru(spctx_t* ctx)
     #define C_LINE  ctx->client.line
     #define S_LINE  ctx->server.line
 
-    for(;;)
+    while(!sp_is_quit())
     {
         mask = spio_select(ctx, &(ctx->client), &(ctx->server), NULL);
 
@@ -962,7 +963,7 @@ static int smtp_passthru(spctx_t* ctx)
                 }
             }
 
-            if(is_successful_rsp(S_LINE))
+            if((p = get_successful_rsp(S_LINE)) != NULL)
             {
                 /*
                  * Filter out any EHLO responses that we can't or don't want
@@ -970,14 +971,13 @@ static int smtp_passthru(spctx_t* ctx)
                  */
                 if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)))
                 {
-                    char* p = S_LINE + r;
                     if(is_first_word(p, ESMTP_PIPELINE, KL(ESMTP_PIPELINE)) ||
                        is_first_word(p, ESMTP_TLS, KL(ESMTP_TLS)) ||
                        is_first_word(p, ESMTP_CHUNK, KL(ESMTP_CHUNK)) ||
                        is_first_word(p, ESMTP_BINARY, KL(ESMTP_BINARY)) ||
                        is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)))
                     {
-                        sp_messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space(p));
+                        sp_messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space((char*)p));
                         continue;
                     }
                 }
@@ -1008,6 +1008,9 @@ static int smtp_passthru(spctx_t* ctx)
                         /* Recipients are separated by lines */
                         if(r != 0)
                             strcat(ctx->recipients, "\n");
+                        else
+                            ctx->recipients[0] = 0;
+
                         strcat(ctx->recipients, t);
                     }
                 }
@@ -1060,7 +1063,7 @@ static char* parse_address(char* line)
     return trim_end(line);
 }
 
-static int is_successful_rsp(const char* line)
+static const char* get_successful_rsp(const char* line)
 {
     /*
      * We check for both '250 xxx' type replies
@@ -1071,9 +1074,9 @@ static int is_successful_rsp(const char* line)
 
     if(line[0] == '2' && isdigit(line[1]) && isdigit(line[2]) &&
        (line[3] == ' ' || line[3] == '-'))
-        return 1;
+        return line + 4;
 
-    return 0;
+    return NULL;
 }
 
 void sp_add_log(spctx_t* ctx, char* prefix, char* line)

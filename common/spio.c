@@ -164,6 +164,7 @@ unsigned int spio_select(spctx_t* ctx, ...)
     fd_set mask;
     spio_t* io;
     int ret = 0;
+    int have = 0;
     int i = 0;
     va_list ap;
 
@@ -174,16 +175,20 @@ unsigned int spio_select(spctx_t* ctx, ...)
 
     while((io = va_arg(ap, spio_t*)) != NULL)
     {
-        /* We can't handle more than 31 args */
-        if(i > (sizeof(int) * 8) - 2)
-            break;
+        if(spio_valid(io))
+        {
+            /* We can't handle more than 31 args */
+            if(i > (sizeof(int) * 8) - 2)
+                break;
 
-        /* Check if the buffer has something in it */
-        if(HAS_EXTRA(io))
-            ret |= (1 << i);
+            /* Check if the buffer has something in it */
+            if(HAS_EXTRA(io))
+                ret |= (1 << i);
 
-        /* Mark for select */
-        FD_SET(io->fd, &mask);
+            /* Mark for select */
+            FD_SET(io->fd, &mask);
+            have = 1;
+        }
 
         i++;
     }
@@ -194,17 +199,35 @@ unsigned int spio_select(spctx_t* ctx, ...)
     if(ret != 0)
         return ret;
 
-    /* Otherwise wait on more data */
-    switch(select(FD_SETSIZE, &mask, NULL, NULL,
-           (struct timeval*)&(g_state.timeout)))
+    /* No valid file descriptors */
+    if(!have)
+        return ~0;
+
+    for(;;)
     {
-    case 0:
-        sp_messagex(ctx, LOG_ERR, "network operation timed out");
-        return ~0;
-    case -1:
-        sp_message(ctx, LOG_ERR, "couldn't select on sockets");
-        return ~0;
-    };
+        /* Otherwise wait on more data */
+        switch(select(FD_SETSIZE, &mask, NULL, NULL,
+               (struct timeval*)&(g_state.timeout)))
+        {
+        case 0:
+            sp_messagex(ctx, LOG_ERR, "network operation timed out");
+            return ~0;
+
+        case -1:
+            if(errno == EINTR)
+            {
+                if(!sp_is_quit())
+                    continue;
+            }
+
+            else
+                sp_message(ctx, LOG_ERR, "couldn't select on sockets");
+
+            return ~0;
+        };
+
+        break;
+    }
 
     /* See what came in */
     i = 0;

@@ -91,6 +91,7 @@ clamsmtp_thread_t;
 
 #define SMTP_DATA           "DATA" CRLF
 #define SMTP_BANNER         "220 clamsmtp" CRLF
+#define SMTP_HELO_RSP       "250 clamsmtp" CRLF
 #define SMTP_DELIMS         "\r\n\t :-"
 
 #define ESMTP_PIPELINE      "PIPELINING"
@@ -674,10 +675,12 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 {
     char logline[LINE_LENGTH];
     int r, ret = 0;
-    int first_rsp = 1;
-    int filter_ehlo = 0;
 	fd_set mask;
     int neterror = 0;
+
+    int first_rsp = 1;      /* The first 220 response from server to be filtered */
+    int filter_ehlo = 0;    /* Filtering parts of an EHLO extensions response */
+    int filter_host = 0;    /* Next response is 250 hostname, which we change */
 
     ASSERT(ctx->clam != -1 && ctx->server != -1);
     logline[0] = 0;
@@ -720,9 +723,9 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 continue;
             }
 
-            /* Only valid after an EHLO command */
-            if(filter_ehlo)
-                filter_ehlo = 0;
+            /* Only valid after EHLO or HELO commands */
+            filter_ehlo = 0;
+            filter_host = 0;
 
             /* Handle the DATA section via our AV checker */
             if(is_first_word(ctx->line, DATA_CMD, KL(DATA_CMD)))
@@ -757,6 +760,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             {
                 messagex(ctx, LOG_DEBUG, "filtering EHLO response");
                 filter_ehlo = 1;
+                filter_host = 1;
 
                 /* A new message */
                 logline[0] = 0;
@@ -768,6 +772,8 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
              */
             else if(is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
             {
+                filter_host = 1;
+
                 /* A new message line */
                 logline[0] = 0;
             }
@@ -844,6 +850,26 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                         RETURN(-1);
 
                     /* Command handled */
+                    continue;
+                }
+            }
+
+            /*
+             * Certain mail servers (Postfix 1.x in particular) do a loop check
+             * on the 250 response after a EHLO or HELO. This is where we
+             * filter that to prevent loopback errors.
+             */
+            if(filter_host)
+            {
+                filter_host = 0;
+
+                if(check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_DELIMS) > 0)
+                {
+                    messagex(ctx, LOG_DEBUG, "intercepting host response");
+
+                    if(write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
+                        RETURN(-1);
+
                     continue;
                 }
             }

@@ -1,3 +1,45 @@
+/*
+ * Copyright (c) 2004, Nate Nielsen
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ *     * Redistributions of source code must retain the above
+ *       copyright notice, this list of conditions and the
+ *       following disclaimer.
+ *     * Redistributions in binary form must reproduce the
+ *       above copyright notice, this list of conditions and
+ *       the following disclaimer in the documentation and/or
+ *       other materials provided with the distribution.
+ *     * The names of contributors to this software may not be
+ *       used to endorse or promote products derived from this
+ *       software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+ * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+ * DAMAGE.
+ *
+ *
+ * CONTRIBUTORS
+ *  Nate Nielsen <nielsen@memberwebs.com>
+ */
+
+/*
+ * select() and stdio are basically mutually exclusive.
+ * Hence all of this code to try to get some buffering
+ * along with select IO multiplexing.
+ */
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -18,7 +60,7 @@
 #include "util.h"
 
 #define MAX_LOG_LINE    79
-#define IO_UNKNOWN  "???   "
+#define GET_IO_NAME(io)  ((io)->name ? (io)->name : "???   ")
 
 static void close_raw(int* fd)
 {
@@ -48,8 +90,7 @@ static void log_io_data(clamsmtp_context_t* ctx, clio_t* io, const char* data, i
         memcpy(buf, data, len);
         buf[len] = 0;
 
-        messagex(ctx, LOG_DEBUG, "%s%s%s",
-            io->name ? io->name : IO_UNKNOWN,
+        messagex(ctx, LOG_DEBUG, "%s%s%s", GET_IO_NAME(io),
             read ? " < " : " > ", buf);
 
         data += pos;
@@ -93,8 +134,7 @@ cleanup:
     }
 
     ASSERT(io->fd != -1);
-    messagex(ctx, LOG_DEBUG, "%s connected to: %s",
-             io->name ? io->name : IO_UNKNOWN, addrname);
+    messagex(ctx, LOG_DEBUG, "%s connected to: %s", GET_IO_NAME(io), addrname);
     return 0;
 }
 
@@ -105,8 +145,7 @@ void clio_disconnect(clamsmtp_context_t* ctx, clio_t* io)
     if(clio_valid(io))
     {
         close_raw(&(io->fd));
-        messagex(ctx, LOG_NOTICE, "%s connection closed",
-                 io->name ? io->name : IO_UNKNOWN);
+        messagex(ctx, LOG_DEBUG, "%s connection closed", GET_IO_NAME(io));
     }
 }
 
@@ -212,17 +251,19 @@ int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
                     continue;
                 }
 
+                if(errno == ECONNRESET) /* Not usually a big deal so supresse the error */
+                    messagex(ctx, LOG_DEBUG, "connection disconnected by peer: %s", GET_IO_NAME(io));
+                else if(errno == EAGAIN)
+                    messagex(ctx, LOG_WARNING, "network read operation timed out: %s", GET_IO_NAME(io));
+                else
+                    message(ctx, LOG_ERR, "couldn't read data from socket: %s", GET_IO_NAME(io));
+
                 /*
                  * The basic logic here is that if we've had a fatal error
                  * reading from the socket once then we shut it down as it's
                  * no good trying to read from again later.
                  */
                 close_raw(&(io->fd));
-
-                if(errno == EAGAIN)
-                    messagex(ctx, LOG_WARNING, "network read operation timed out");
-                else
-                    message(ctx, LOG_ERR, "couldn't read data from socket");
 
                 return -1;
             }
@@ -354,9 +395,9 @@ int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf,
             close_raw(&(io->fd));
 
             if(errno == EAGAIN)
-                messagex(ctx, LOG_WARNING, "network write operation timed out");
+                messagex(ctx, LOG_WARNING, "network write operation timed out: %s", GET_IO_NAME(io));
             else
-                message(ctx, LOG_ERR, "couldn't write data to socket");
+                message(ctx, LOG_ERR, "couldn't write data to socket: %s", GET_IO_NAME(io));
 
             return -1;
         }

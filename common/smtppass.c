@@ -958,7 +958,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     strlcat(buf, "/clamsmtpd.XXXXXX", MAXPATHLEN);
 
     /* transfer_to_file deletes the temp file on failure */
-    if((r = transfer_to_file(ctx, buf)) != -1)
+    if((r = transfer_to_file(ctx, buf)) > 0)
     {
         havefile = 1;
         r = clam_scan_file(ctx, buf, logline);
@@ -1275,6 +1275,7 @@ static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname)
 
         /* We check errors on this later */
         fwrite(ctx->line, 1, ctx->linelen, tfile);
+        count += ctx->linelen;
 
         /* Check if this line ended with a CRLF */
         ended_crlf = (strcmp(CRLF, ctx->line + (ctx->linelen - KL(CRLF))) == 0);
@@ -1300,7 +1301,7 @@ cleanup:
         if(tfile == NULL)
             close(tfd);
 
-        if(ret == -1)
+        if(ret <= 0)
         {
             messagex(ctx, LOG_DEBUG, "discarding temporary file");
             unlink(tempname);
@@ -1323,7 +1324,7 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
         RETURN(-1);
     }
 
-    messagex(ctx, LOG_DEBUG, "opened temporary file: %s", filename);
+    messagex(ctx, LOG_DEBUG, "sending from temporary file: %s", filename);
 
     while(fgets(ctx->line, LINE_LENGTH, file) != NULL)
     {

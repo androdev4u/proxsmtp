@@ -171,7 +171,7 @@ int main(int argc, char* argv[])
     clstate_init(&g_state);
 
     /* Parse the arguments nicely */
-    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:qt:v")) != -1)
+    while((ch = getopt(argc, argv, "bc:d:D:f:h:l:m:p:qt:v")) != -1)
     {
         switch(ch)
         {
@@ -267,7 +267,7 @@ int main(int argc, char* argv[])
 		}
     }
 
-    if(warnargs);
+    if(warnargs)
         warnx("please use configuration file instead of command-line flags: %s", configfile);
 
 	argc -= optind;
@@ -357,9 +357,13 @@ int main(int argc, char* argv[])
     if(g_state.pidfile)
         pid_file(0);
 
-    clstate_cleanup(&g_state);
     messagex(NULL, LOG_DEBUG, "stopped");
 
+    /*
+     * We have to do this at the very end because even printing
+     * messages requires that g_state is valid.
+     */
+    clstate_cleanup(&g_state);
     return 0;
 }
 

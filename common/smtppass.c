@@ -59,19 +59,19 @@
 
 #include "compat.h"
 #include "sock_any.h"
-#include "clamsmtpd.h"
+#include "smtppass.h"
 #include "util.h"
 
 /* -----------------------------------------------------------------------
  *  STRUCTURES
  */
 
-typedef struct clamsmtp_thread
+typedef struct smtppass_thread
 {
     pthread_t tid;      /* Written to by the main thread */
     int fd;             /* The file descriptor or -1 */
 }
-clamsmtp_thread_t;
+smtppass_thread_t;
 
 /* -----------------------------------------------------------------------
  *  STRINGS
@@ -117,17 +117,6 @@ clamsmtp_thread_t;
 #define OK_RSP              "250"
 #define START_RSP           "220"
 
-#define CLAM_OK             "OK"
-#define CLAM_ERROR          "ERROR"
-#define CLAM_FOUND          "FOUND"
-
-#define CONNECT_RSP         "PONG"
-#define CLAM_SCAN           "SCAN "
-
-#define CLAM_CONNECT        "SESSION\nPING\n"
-#define CLAM_DISCONNECT     "END\n"
-
-#define DEFAULT_CONFIG      CONF_PREFIX "/clamsmtpd.conf"
 
 /* -----------------------------------------------------------------------
  *  GLOBALS

@@ -123,7 +123,7 @@ spthread_t;
 /* The set of delimiters that can be present between config and value */
 #define CFG_DELIMS      ": \t"
 
-#define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (SP_LINE_LENGTH - 2))
+#define LINE_TOO_LONG(l)      ((l) >= (SP_LINE_LENGTH - 2))
 
 /* -----------------------------------------------------------------------
  *  CONFIGURATION OPTIONS
@@ -1364,7 +1364,7 @@ static int read_server_response(spctx_t* ctx)
     return 0;
 }
 
-void sp_setup_env(spctx_t* ctx)
+void sp_setup_env(spctx_t* ctx, int file)
 {
     if(ctx->sender)
         setenv("SENDER", ctx->sender, 1);
@@ -1372,7 +1372,7 @@ void sp_setup_env(spctx_t* ctx)
     if(ctx->recipients)
         setenv("RECIPIENTS", ctx->recipients, 1);
 
-    if(ctx->cachename[0])
+    if(file && ctx->cachename[0])
         setenv("EMAIL", ctx->cachename, 1);
 
     setenv("TMP", g_state.directory, 1);

@@ -215,10 +215,10 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status);
 
 /*
  * Setup the environment with context info. This is useful
- * if you're going to fork another process. Be sure to fork
+ * if you're going to fork another process. Be sure to exec
  * soon after to prevent the strings from going out of scope.
  */
-void sp_setup_env(spctx_t* ctx);
+void sp_setup_env(spctx_t* ctx, int file);
 
 /*
  * Log a message. levels are syslog levels. Syntax is just

@@ -721,6 +721,10 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 continue;
             }
 
+            /* Only valid after an EHLO command */
+            if(filter_ehlo)
+                filter_ehlo = 0;
+
             /* Handle the DATA section via our AV checker */
             if(is_first_word(ctx->line, DATA_CMD, KL(DATA_CMD)))
             {
@@ -851,14 +855,9 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                        is_first_word(p, ESMTP_BINARY, KL(ESMTP_BINARY)) ||
                        is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)))
                     {
-                        messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", p);
+                        messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space(p));
                         continue;
                     }
-                }
-                else
-                {
-                    filter_ehlo = 0;
-                    messagex(ctx, LOG_DEBUG, "done filtering ESMTP response");
                 }
             }
 

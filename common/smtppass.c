@@ -626,7 +626,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 		switch(select(FD_SETSIZE, &mask, NULL, NULL, &g_timeout))
 		{
 		case 0:
-			message(ctx, LOG_ERR, "network operation timed out");
+			messagex(ctx, LOG_ERR, "network operation timed out");
             RETURN(-1);
 		case -1:
 			message(ctx, LOG_ERR, "couldn't select on sockets");

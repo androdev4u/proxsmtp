@@ -575,6 +575,10 @@ static void* thread_main(void* arg)
     plock();
         /* Assign a unique id to the connection */
         ctx->id = g_unique_id++;
+
+        /* We don't care about wraps, but we don't want zero */
+        if(g_unique_id == 0)
+            g_unique_id++;
     punlock();
 
     ctx->client.fd = fd;

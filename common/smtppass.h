@@ -68,6 +68,7 @@ typedef struct spio
     const char* name;                   /* The name for logging */
     time_t last_action;                 /* Time of last action on descriptor */
     char peername[MAXPATHLEN];          /* Name of the peer on other side of socket */
+    char localname[MAXPATHLEN];         /* Address where we accepted the connection */
 
     /* Internal use only */
     char line[SP_LINE_LENGTH];
@@ -210,10 +211,9 @@ int sp_cache_data(spctx_t* ctx);
 
 /*
  * Sends the data in file buffer off to server. This is
- * completes a successful mail transfer. The optional header
- * is appended to the end of the email headers.
+ * completes a successful mail transfer.
  */
-int sp_done_data(spctx_t* ctx, const char* header);
+int sp_done_data(spctx_t* ctx);
 
 /*
  * Fails the data, deletes any temp data, and sends given

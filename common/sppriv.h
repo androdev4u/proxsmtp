@@ -53,6 +53,8 @@ typedef struct spstate
     const char* directory;          /* The temp directory */
     const char* user;               /* User to run as */
     const char* pidfile;            /* The pid file for daemon */
+    const char* header;             /* A header to include in the email */
+    int header_prepend;             /* Prepend the header or not */
 
     struct sockaddr_any outaddr;    /* The outgoing address */
     const char* outname;

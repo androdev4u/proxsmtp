@@ -35,6 +35,7 @@
  *  Nate Nielsen <nielsen@memberwebs.com>
  *  Andreas Steinmetz <ast@domdv.de>
  *  Rubio Vaughan <rubio@passim.net>
+ *  Olivier Beyssac <ob@r14.freenix.org>
  */
 
 #include <sys/time.h>
@@ -54,6 +55,7 @@
 #include <paths.h>
 #include <stdarg.h>
 #include <pwd.h>
+#include <time.h>
 
 #include "usuals.h"
 
@@ -126,10 +128,22 @@ spthread_t;
 #define OK_RSP              "250"
 #define START_RSP           "220"
 
-/* The set of delimiters that can be present between config and value */
-#define CFG_DELIMS      ": \t"
+#define RCVD_HEADER         "Received:"
 
-#define LINE_TOO_LONG(l)      ((l) >= (SP_LINE_LENGTH - 2))
+/* The set of delimiters that can be present between config and value */
+#define CFG_DELIMS      	": \t"
+
+/* Maximum length of the header argument */
+#define MAX_HEADER_LENGTH 	1024
+
+/*
+ * asctime_r manpage: "stores the string in a user-supplied buffer of
+ * length at least 26".  We'll need some more bytes to put timezone
+ * information behind
+ */
+#define MAX_DATE_LENGTH 	64
+
+#define LINE_TOO_LONG(l)    ((l) >= (SP_LINE_LENGTH - 2))
 
 /* -----------------------------------------------------------------------
  *  CONFIGURATION OPTIONS
@@ -145,6 +159,7 @@ spthread_t;
 #define CFG_TIMEOUT         "TimeOut"
 #define CFG_OUTADDR         "OutAddress"
 #define CFG_LISTENADDR      "Listen"
+#define CFG_HEADER      	"Header"
 #define CFG_TRANSPARENT     "TransparentProxy"
 #define CFG_DIRECTORY       "TempDirectory"
 #define CFG_KEEPALIVES      "KeepAlives"
@@ -170,7 +185,6 @@ spstate_t g_state;                          /* The state and configuration of th
 unsigned int g_unique_id = 0x00100000;      /* For connection ids */
 pthread_mutex_t g_mutex;                    /* The main mutex */
 pthread_mutexattr_t g_mtxattr;
-
 
 /* -----------------------------------------------------------------------
  *  FORWARD DECLARATIONS
@@ -1309,12 +1323,133 @@ int sp_cache_data(spctx_t* ctx)
     return count;
 }
 
-int sp_done_data(spctx_t* ctx, const char* header)
+/* Important: |date| should be at least MAX_DATE_LENGTH long */
+static void make_date(spctx_t* ctx, char* date)
+{
+    size_t date_len;
+    struct tm t2;
+    long gmt;
+    time_t t;
+
+    /* Get a basic date like: 'Wed Jun 30 21:49:08 1993' */
+    if(time(&t) == (time_t)-1 ||
+       !localtime_r(&t, &t2) ||
+       !asctime_r(&t2, date))
+    {
+        sp_message(ctx, LOG_WARNING, "unable to get date for header");
+        date[0] = 0;
+        return;
+    }
+
+    /* Now add the TZ */
+    trim_end(date);
+    gmt = t2.tm_gmtoff;
+    date_len = strlen(date);
+
+    snprintf(date + date_len, MAX_DATE_LENGTH - date_len, " %+03d%02d (%s)",
+             (int)(gmt / 3600), (int)(gmt % 3600), t2.tm_zone);
+
+    /* Break it off just in case */
+    date[MAX_DATE_LENGTH - 1] = 0;
+}
+
+/* Important: |header| should be a buffer of MAX_HEADER_LENGTH */
+static int make_header(spctx_t* ctx, const char* format_str, char* header)
+{
+    char date[MAX_DATE_LENGTH];
+    int remaining, l;
+    const char* f;
+    char* p;
+
+    date[0] = 0;
+    remaining = MAX_HEADER_LENGTH - 1;
+    p = header;
+
+    /* Parse the format string and replace special characters with our data */
+    for(f = format_str; *f && remaining > 0; f++)
+    {
+        /* A backslash escapes certain characters */
+        if(f[0] == '\\' && f[1] != 0)
+        {
+            switch(*(++f))
+            {
+            case 'r':
+                *p = '\r';
+                break;
+            case 'n':
+                *p = '\n';
+                break;
+            case 't':
+                *p = '\t';
+                break;
+            default:
+                *p = *f;
+                break;
+            }
+
+            ++f;
+            ++p;
+            --remaining;
+        }
+
+        /*
+         * Special symbols:
+         *    %i: client's IP
+         *    %l: server's IP
+         *    %d: date
+         */
+        else if(f[0] == '%' && f[1] != 0)
+        {
+            switch(*(++f))
+            {
+            case 'i':
+                l = strlen(ctx->client.peername);
+                strncpy(p, ctx->client.peername, remaining);
+                remaining -= l;
+                p += l;
+                break;
+            case 'l':
+                l = strlen(ctx->client.localname);
+                strncpy(p, ctx->client.localname, remaining);
+                remaining -= l;
+                p += l;
+                break;
+            case 'd':
+                if(date[0] == 0)
+                    make_date(ctx, date);
+                l = strlen(date);
+                strncpy(p, date, remaining);
+                remaining -= l;
+                p += l;
+                break;
+            default:
+                sp_message(ctx, LOG_WARNING, "invalid header symbol: %%%c", *f);
+                break;
+            };
+        }
+
+        else
+        {
+            *(p++) = *(f++);
+            remaining--;
+        }
+    }
+
+    if(p < header + MAX_HEADER_LENGTH)
+        *p = 0;
+    header[MAX_HEADER_LENGTH - 1] = 0;
+    l = p - header;
+    return (l > MAX_HEADER_LENGTH ? MAX_HEADER_LENGTH : l) - 1;
+}
+
+int sp_done_data(spctx_t* ctx)
 {
     FILE* file = 0;
     int had_header = 0;
     int ret = 0;
     char line[SP_LINE_LENGTH];
+    char header[MAX_HEADER_LENGTH];
+    size_t header_len;
 
     ASSERT(ctx->cachename[0]);  /* Must still be around */
     ASSERT(!ctx->cachefile);    /* File must be closed */
@@ -1347,6 +1482,18 @@ int sp_done_data(spctx_t* ctx, const char* header)
 
     sp_messagex(ctx, LOG_DEBUG, "sending from cache file: %s", ctx->cachename);
 
+    if(g_state.header)
+        header_len = make_header(ctx, g_state.header, header);
+
+    /* If we have to prepend the header, do it */
+    if(header[0] && g_state.header_prepend)
+    {
+	    if(spio_write_data_raw(ctx, &(ctx->server), (char*)header, header_len) == -1 ||
+	       spio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
+	        RETURN(-1);
+	    had_header = 1;
+    }
+
     /* Transfer actual file data */
     while(fgets(line, SP_LINE_LENGTH, file) != NULL)
     {
@@ -1359,7 +1506,7 @@ int sp_done_data(spctx_t* ctx, const char* header)
         if(strcmp(line, "." CRLF) == 0)
             strncpy(line, ". " CRLF, SP_LINE_LENGTH);
 
-        if(header && !had_header)
+        if(header[0] && !had_header)
         {
             /*
              * The first blank line we see means the headers are done.
@@ -1367,7 +1514,7 @@ int sp_done_data(spctx_t* ctx, const char* header)
              */
             if(is_blank_line(line))
             {
-                if(spio_write_data_raw(ctx, &(ctx->server), (char*)header, strlen(header)) == -1 ||
+                if(spio_write_data_raw(ctx, &(ctx->server), (char*)header, header_len) == -1 ||
                    spio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
 
@@ -1721,6 +1868,16 @@ int sp_parse_option(const char* name, const char* value)
         else
             g_state.pidfile = value;
         ret = 1;
+    }
+
+    else if(strcasecmp(CFG_HEADER, name) == 0)
+    {
+        g_state.header = trim_start(value);
+	    if(strlen(g_state.header) == 0)
+	        g_state.header = NULL;
+	    else if(is_first_word(RCVD_HEADER, g_state.header, KL(RCVD_HEADER)) == 0)
+	        g_state.header_prepend = 1;
+	    ret = 1;
     }
 
     /* Always pass through to program */

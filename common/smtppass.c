@@ -662,7 +662,7 @@ static int connect_out(clamsmtp_context_t* ctx)
 #ifdef LINUX_TRANSPARENT_PROXY
         if(getsockopt(ctx->client.fd, SOL_IP, SO_ORIGINAL_DST, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
 #else
-        if(getsockname(ctx->client.fd, &SANY_ADDR(addr1), &SANY_LEN(addr1)) == -1)
+        if(getsockname(ctx->client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
 #endif
         {
             message(ctx, LOG_ERR, "couldn't get source address for transparent proxying");
@@ -706,6 +706,8 @@ static int connect_out(clamsmtp_context_t* ctx)
     if(outaddr != &(g_state->outaddr))
     {
         if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)
+            outname = buf;
+        else
             outname = "unknown";
     }
 

@@ -233,7 +233,14 @@ int main(int argc, char* argv[])
             if(strlen(optarg) == 0)
                 g_header = NULL;
             else
+            {
                 g_header = optarg;
+
+                /* Trim off any ending newline chars */
+                t = g_header + strlen(g_header);
+                while(t > g_header && (*(t - 1) == '\r' || *(t - 1) == '\n'))
+                    *(--t) = 0;
+            }
             break;
 
         /* Change our listening port */

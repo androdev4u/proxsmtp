@@ -599,8 +599,6 @@ static spctx_t* init_thread(int fd)
             cb_del_context(ctx);
             ctx = NULL;
         }
-
-        ASSERT(ctx->client.fd != -1);
     }
 
     return ctx;

@@ -1,6 +1,6 @@
 0.6
   - Added CLIENT and SERVER variables to VirusAction script environment.
-  - Even better logging for network errors.
+  - Even better logging for network errors and filter warnings.
   - Print out proxsmtp version in debug logs
   - Allow configuration of server keep alives (NOOPs). Default to none
 

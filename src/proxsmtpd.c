@@ -856,8 +856,12 @@ static int wait_process(spctx_t* sp, pid_t pid, int* status)
         case 0:
             break;
         case -1:
-            sp_message(sp, LOG_CRIT, "error waiting on process");
-            return -1;
+            if(errno != ECHILD || errno != ESRCH)
+            {
+                sp_message(sp, LOG_CRIT, "error waiting on process");
+                return -1;
+            }
+            /* fall through */
         default:
             return 0;
         }

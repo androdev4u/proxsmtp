@@ -1,2 +1,4 @@
 0.5
   - Initial fork from clamsmtp version 0.9
+  - Converted into filter based SMTP pass-through
+

@@ -47,12 +47,15 @@
 
 #include <arpa/inet.h>
 
-int sock_any_pton(const char* addr, struct sockaddr_any* any, int defport)
+#define LOCALHOST_ADDR  0x7F000001
+
+int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
 {
   size_t l;
   char buf[256];
   char* t;
   char* t2;
+  int defport = (opts & 0xFFFF);
 
   memset(any, 0, sizeof(*any));
 
@@ -69,13 +72,35 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int defport)
     if(l < PORT_MIN || l > PORT_MAX || addr[l] != 0)
       break;
 
-    port = strtol(t, &t2, 10);
+    port = strtol(addr, &t2, 10);
     if(*t2 || port <= 0 || port >= 65536)
       break;
 
-    any->s.in.sin_family = AF_INET;
-    any->s.in.sin_port = htons((unsigned short)(port <= 0 ? defport : port));
-    any->s.in.sin_addr.s_addr = 0;
+    any->s.in.sin_port = htons(port);
+
+    /* Fill in the type based on defaults */
+#ifdef HAVE_INET6
+    if(opts & SANY_OPT_DEFINET6)
+        any->s.in.sin_family = AF_INET6;
+    else
+#endif
+        any->s.in.sin_family = AF_INET;
+
+    /* Fill in the address based on defaults */
+    if(opts & SANY_OPT_DEFLOCAL)
+    {
+#ifdef HAVE_INET6
+        if(opts & SANY_OPT_DEFINET6)
+            memcpy(&(any->s.in.sin6_addr), &in6addr_loopback, sizeof(struct in6_addr));
+        else
+#endif
+            any->s.in.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
+
+    /*
+     * Note the 'any' option is the default since we zero out
+     * the entire structure above.
+     */
 
     any->namelen = sizeof(any->s.in);
     return AF_INET;
@@ -274,9 +299,10 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int defport)
   return -1;
 }
 
-int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen)
+int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen, int opts)
 {
   int len = 0;
+  int port = 0;
 
   switch(any->s.a.sa_family)
   {
@@ -294,18 +320,32 @@ int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen)
   case AF_INET:
     if(inet_ntop(any->s.a.sa_family, &(any->s.in.sin_addr), addr, addrlen) == NULL)
       return -1;
+    port = ntohs(any->s.in.sin_port);
     break;
 
 #ifdef HAVE_INET6
   case AF_INET6:
     if(inet_ntop(any->s.a.sa_family, &(any->s.in6.sin6_addr), addr, addrlen) == NULL)
       return -1;
+    port = ntohs(any->s.in6.sin6_port);
     break;
 #endif
 
   default:
     errno = EAFNOSUPPORT;
     return -1;
+  }
+
+  if(!(opts & SANY_OPT_NOPORT) && port != 0)
+  {
+    strncat(addr, ":", addrlen);
+    addr[addrlen - 1] = 0;
+
+    len = strlen(addr);
+    addr += len;
+    addrlen -= len;
+
+    snprintf(addr, addrlen, "%d", port);
   }
 
   return 0;

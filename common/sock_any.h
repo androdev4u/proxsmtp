@@ -64,7 +64,25 @@ struct sockaddr_any
 #define SANY_LEN(any)   ((any).namelen)
 #define SANY_TYPE(any)  ((any).s.a.sa_family)
 
-int sock_any_pton(const char* addr, struct sockaddr_any* any, int defport);
-int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen);
+int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts);
+
+/* The default port to fill in when no IP/IPv6 port specified */
+#define SANY_OPT_DEFPORT(p)     (int)((p) & 0xFFFF)
+
+/* When only port specified default to IPANY */
+#define SANY_OPT_DEFANY         0x00000000
+
+/* When only port specified default to LOCALHOST */
+#define SANY_OPT_DEFLOCAL       0x00100000
+
+/* When only port specified default to IPv6 */
+#ifdef HAVE_INET6
+#define SANY_OPT_DEFINET6       0x00200000
+#endif
+
+int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen, int opts);
+
+/* Don't print the port */
+#define SANY_OPT_NOPORT         0x01000000
 
 #endif /* __SOCK_ANY_H__ */

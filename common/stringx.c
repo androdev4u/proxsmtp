@@ -62,6 +62,7 @@ static void vmessage(clamsmtp_context_t* ctx, int level, int err,
     size_t len;
     char* m;
     int e = errno;
+    int x;
 
     if(g_daemonized)
     {
@@ -87,7 +88,11 @@ static void vmessage(clamsmtp_context_t* ctx, int level, int err,
             snprintf(m, len, "%s%s", msg, err ? ": " : "");
 
         if(err)
-            strerror_r(e, m + strlen(m), MAX_MSGLEN);
+        {
+            /* TODO: strerror_r doesn't want to work for us
+            strerror(e, m + strlen(m), MAX_MSGLEN); */
+            strncat(m, strerror(e), len);
+        }
 
         m[len - 1] = 0;
         msg = m;

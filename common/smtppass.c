@@ -113,13 +113,11 @@ clamsmtp_thread_t;
  * Default Settings
  */
 
-#define DEFAULT_SOCKET  "0.0.0.0:10025"
-#define DEFAULT_PORT    10025
+#define DEFAULT_SOCKET  "10025"
 #define DEFAULT_CLAMAV  "/var/run/clamav/clamd"
 #define DEFAULT_MAXTHREADS  64
 #define DEFAULT_TIMEOUT	180
 #define DEFAULT_HEADER  "X-AV-Checked: ClamAV using ClamSMTP\r\n"
-
 
 /* -----------------------------------------------------------------------
  * Globals
@@ -265,11 +263,11 @@ int main(int argc, char* argv[])
     messagex(NULL, LOG_DEBUG, "starting up...");
 
     /* Parse all the addresses */
-    if(sock_any_pton(listensock, &addr, DEFAULT_PORT) == -1)
+    if(sock_any_pton(listensock, &addr, SANY_OPT_DEFANY) == -1)
         errx(1, "invalid listen socket name or ip: %s", listensock);
-    if(sock_any_pton(g_outname, &g_outaddr, 25) == -1)
+    if(sock_any_pton(g_outname, &g_outaddr, SANY_OPT_DEFPORT(25)) == -1)
         errx(1, "invalid connect socket name or ip: %s", g_outname);
-    if(sock_any_pton(g_clamname, &g_clamaddr, 0) == -1)
+    if(sock_any_pton(g_clamname, &g_clamaddr, SANY_OPT_DEFLOCAL) == -1)
         errx(1, "invalid clam socket name: %s", g_clamname);
 
     if(daemonize)
@@ -492,10 +490,12 @@ static void pid_file(const char* pidfile, int write)
 static void* thread_main(void* arg)
 {
     clamsmtp_thread_t* thread = (clamsmtp_thread_t*)arg;
-    char peername[MAXPATHLEN];
     struct sockaddr_any addr;
+    struct sockaddr_any* outaddr;
+    const char* outname;
+    char buf[MAXPATHLEN];
     clamsmtp_context_t ctx;
-    int r;
+    int ret = 0;
 
     ASSERT(thread);
 
@@ -504,43 +504,88 @@ static void* thread_main(void* arg)
 
     memset(&ctx, 0, sizeof(ctx));
 
-    plock();
-        ctx.client = thread->fd;
-    punlock();
+    /* Assign a unique id to the connection */
+    ctx.id = g_unique_id++;
 
     ctx.server = -1;
     ctx.clam = -1;
 
-    ASSERT(ctx.client != -1);
+    plock();
+        ctx.client = thread->fd;
+    punlock();
 
-    /* Assign a unique id to the connection */
-    ctx.id = g_unique_id++;
+    ASSERT(ctx.client != -1);
 
     memset(&addr, 0, sizeof(addr));
     SANY_LEN(addr) = sizeof(addr);
 
     /* Get the peer name */
     if(getpeername(ctx.client, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1 ||
-       sock_any_ntop(&addr, peername, MAXPATHLEN) == -1)
+       sock_any_ntop(&addr, buf, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
         message(&ctx, LOG_WARNING, "couldn't get peer address");
     else
-        messagex(&ctx, LOG_INFO, "accepted connection from: %s", peername);
+        messagex(&ctx, LOG_INFO, "accepted connection from: %s", buf);
+
+
+    /* Create the server connection address */
+    outaddr = &g_outaddr;
+    outname = g_outname;
+
+    if(SANY_TYPE(*outaddr) == AF_INET &&
+       outaddr->s.in.sin_addr.s_addr == 0)
+    {
+        /* Use the incoming IP as the default */
+        in_addr_t in = addr.s.in.sin_addr.s_addr;
+        memcpy(&addr, &g_outaddr, sizeof(addr));
+        addr.s.in.sin_addr.s_addr = in;
+
+        outaddr = &addr;
+
+        if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)
+            outname = buf;
+    }
+
+
+    /* Connect to the server */
+    if((ctx.server = socket(SANY_TYPE(*outaddr), SOCK_STREAM, 0)) < 0 ||
+        connect(ctx.server, &SANY_ADDR(*outaddr), SANY_LEN(*outaddr)) < 0)
+    {
+        message(&ctx, LOG_ERR, "couldn't connect to %s", outname);
+        RETURN(-1);
+    }
+
+    messagex(&ctx, LOG_DEBUG, "connected to server: %s", outname);
+
+
+    if(connect_clam(&ctx) == -1)
+        RETURN(-1);
+
 
     /* call the processor */
-    r = smtp_passthru(&ctx);
+    ret = smtp_passthru(&ctx);
 
-    /* Close the incoming connection if neccessary */
+cleanup:
+
+    disconnect_clam(&ctx);
+
     if(ctx.client != -1)
+    {
         shutdown(ctx.client, SHUT_RDWR);
+        messagex(&ctx, LOG_NOTICE, "closed client connection");
+    }
 
-    messagex(&ctx, LOG_NOTICE, "closed client connection");
+    if(ctx.server != -1)
+    {
+        shutdown(ctx.server, SHUT_RDWR);
+        messagex(&ctx, LOG_DEBUG, "closed server connection");
+    }
 
     /* mark this as done */
     plock();
         thread->fd = -1;
     punlock();
 
-    return (void*)(r == 0 ? 0 : 1);
+    return (void*)(ret == 0 ? 0 : 1);
 }
 
 static int smtp_passthru(clamsmtp_context_t* ctx)
@@ -550,19 +595,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
     int r, ret = 0;
 	fd_set mask;
 
-    ASSERT(ctx->server == -1);
-
-    if((ctx->server = socket(SANY_TYPE(g_outaddr), SOCK_STREAM, 0)) < 0 ||
-        connect(ctx->server, &SANY_ADDR(g_outaddr), SANY_LEN(g_outaddr)) < 0)
-    {
-        message(ctx, LOG_ERR, "couldn't connect to %s", g_outname);
-        RETURN(-1);
-    }
-
-    messagex(ctx, LOG_DEBUG, "connected to server: %s", g_outname);
-
-    if(connect_clam(ctx) == -1)
-        RETURN(-1);
+    ASSERT(ctx->clam != -1 && ctx->server != -1);
 
     /* This changes the error code sent to the client when an
      * error occurs. See cleanup below */
@@ -683,18 +716,10 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
 cleanup:
 
-    disconnect_clam(ctx);
-
     if(ret == -1 && ctx->client != -1)
     {
        write_data(ctx, &(ctx->client),
                 processing ? SMTP_FAILED : SMTP_STARTFAILED);
-    }
-
-    if(ctx->server != -1)
-    {
-        shutdown(ctx->server, SHUT_RDWR);
-        messagex(ctx, LOG_DEBUG, "closed server connection");
     }
 
     return ret;
@@ -771,7 +796,7 @@ cleanup:
         if(ctx->clam != -1)
         {
             shutdown(ctx->clam, SHUT_RDWR);
-            ctx->clam == -1;
+            ctx->clam = -1;
         }
     }
 
@@ -786,8 +811,8 @@ static int disconnect_clam(clamsmtp_context_t* ctx)
     if(write_data(ctx, &(ctx->clam), CLAM_DISCONNECT) != -1)
         read_junk(ctx, ctx->clam);
 
-    messagex(ctx, LOG_DEBUG, "disconnected from clamd");
     shutdown(ctx->clam, SHUT_RDWR);
+    messagex(ctx, LOG_DEBUG, "disconnected from clamd");
     ctx->clam = -1;
     return 0;
 }

@@ -133,7 +133,7 @@ clamsmtp_thread_t;
  *  GLOBALS
  */
 
-clstate_t g_state;                          /* The state and configuration of the daemon */
+const clstate_t* g_state = NULL;            /* The state and configuration of the daemon */
 unsigned int g_unique_id = 0x00100000;      /* For connection ids */
 
 
@@ -169,13 +169,15 @@ int main(int argc, char* argv[])
 {
     const char* configfile = DEFAULT_CONFIG;
     const char* pidfile = NULL;
+    clstate_t state;
     int warnargs = 0;
     int sock;
     int true = 1;
     int ch = 0;
     char* t;
 
-    clstate_init(&g_state);
+    clstate_init(&state);
+    g_state = &state;
 
     /* Parse the arguments nicely */
     while((ch = getopt(argc, argv, "bc:d:D:f:h:l:m:p:qt:v")) != -1)
@@ -184,27 +186,27 @@ int main(int argc, char* argv[])
         {
         /* Actively reject messages */
         case 'b':
-            g_state.bounce = 1;
+            state.bounce = 1;
             warnargs = 1;
             break;
 
         /* Change the CLAM socket */
         case 'c':
-            g_state.clamname = optarg;
+            state.clamname = optarg;
             warnargs = 1;
             break;
 
 		/*  Don't daemonize  */
         case 'd':
-            g_state.debug_level = strtol(optarg, &t, 10);
+            state.debug_level = strtol(optarg, &t, 10);
             if(*t) /* parse error */
                 errx(1, "invalid debug log level");
-            g_state.debug_level += LOG_ERR;
+            state.debug_level += LOG_ERR;
             break;
 
         /* The directory for the files */
         case 'D':
-            g_state.directory = optarg;
+            state.directory = optarg;
             warnargs = 1;
             break;
 
@@ -216,21 +218,21 @@ int main(int argc, char* argv[])
         /* The header to add */
         case 'h':
             if(strlen(optarg) == 0)
-                g_state.header = NULL;
+                state.header = NULL;
             else
-                g_state.header = optarg;
+                state.header = optarg;
             warnargs = 1;
             break;
 
         /* Change our listening port */
         case 'l':
-            g_state.listenname = optarg;
+            state.listenname = optarg;
             warnargs = 1;
             break;
 
         /* The maximum number of threads */
         case 'm':
-            g_state.max_threads = strtol(optarg, &t, 10);
+            state.max_threads = strtol(optarg, &t, 10);
             if(*t) /* parse error */
                 errx(1, "invalid max threads");
             warnargs = 1;
@@ -243,7 +245,7 @@ int main(int argc, char* argv[])
 
         /* The timeout */
 		case 't':
-			g_state.timeout.tv_sec = strtol(optarg, &t, 10);
+			state.timeout.tv_sec = strtol(optarg, &t, 10);
 			if(*t) /* parse error */
 				errx(1, "invalid timeout");
             warnargs = 1;
@@ -251,7 +253,7 @@ int main(int argc, char* argv[])
 
         /* Leave virus files in directory */
         case 'q':
-            g_state.quarantine = 1;
+            state.quarantine = 1;
             break;
 
         /* Print version number */
@@ -262,7 +264,7 @@ int main(int argc, char* argv[])
 
         /* Leave all files in the tmp directory */
         case 'X':
-            g_state.debug_files = 1;
+            state.debug_files = 1;
             warnargs = 1;
             break;
 
@@ -274,19 +276,22 @@ int main(int argc, char* argv[])
 		}
     }
 
-    if(warnargs)
-        warnx("please use configuration file instead of command-line flags: %s", configfile);
-
 	argc -= optind;
 	argv += optind;
 
     if(argc > 1)
         usage();
     if(argc == 1)
-        g_state.outname = argv[0];
+    {
+        state.outname = argv[0];
+        warnargs = 1;
+    }
+
+    if(warnargs)
+        warnx("please use configuration file instead of command-line flags: %s", configfile);
 
     /* Now parse the configuration file */
-    if(clstate_parse_config(&g_state, configfile) == -1)
+    if(clstate_parse_config(&state, configfile) == -1)
     {
         /* Only error when it was forced */
         if(configfile != DEFAULT_CONFIG)
@@ -295,12 +300,12 @@ int main(int argc, char* argv[])
             warnx("default configuration file not found: %s", configfile);
     }
 
-    clstate_validate(&g_state);
+    clstate_validate(&state);
 
     messagex(NULL, LOG_DEBUG, "starting up...");
 
     /* When set to this we daemonize */
-    if(g_state.debug_level == -1)
+    if(g_state->debug_level == -1)
     {
         /* Fork a daemon nicely here */
         if(daemon(0, 0) == -1)
@@ -310,14 +315,14 @@ int main(int argc, char* argv[])
         }
 
         messagex(NULL, LOG_DEBUG, "running as a daemon");
-        g_state.daemonized = 1;
+        state.daemonized = 1;
 
         /* Open the system log */
         openlog("clamsmtpd", 0, LOG_MAIL);
     }
 
     /* Create the socket */
-    sock = socket(SANY_TYPE(g_state.listenaddr), SOCK_STREAM, 0);
+    sock = socket(SANY_TYPE(g_state->listenaddr), SOCK_STREAM, 0);
     if(sock < 0)
     {
         message(NULL, LOG_CRIT, "couldn't open socket");
@@ -327,12 +332,12 @@ int main(int argc, char* argv[])
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true));
 
     /* Unlink the socket file if it exists */
-    if(SANY_TYPE(g_state.listenaddr) == AF_UNIX)
-        unlink(g_state.listenname);
+    if(SANY_TYPE(g_state->listenaddr) == AF_UNIX)
+        unlink(g_state->listenname);
 
-    if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
+    if(bind(sock, &SANY_ADDR(g_state->listenaddr), SANY_LEN(g_state->listenaddr)) != 0)
     {
-        message(NULL, LOG_CRIT, "couldn't bind to address: %s", g_state.listenname);
+        message(NULL, LOG_CRIT, "couldn't bind to address: %s", g_state->listenname);
         exit(1);
     }
 
@@ -343,7 +348,7 @@ int main(int argc, char* argv[])
         exit(1);
     }
 
-    messagex(NULL, LOG_DEBUG, "created socket: %s", g_state.listenname);
+    messagex(NULL, LOG_DEBUG, "created socket: %s", g_state->listenname);
 
     /* Handle some signals */
     signal(SIGPIPE, SIG_IGN);
@@ -370,13 +375,13 @@ int main(int argc, char* argv[])
      * We have to do this at the very end because even printing
      * messages requires that g_state is valid.
      */
-    clstate_cleanup(&g_state);
+    clstate_cleanup(&state);
     return 0;
 }
 
 static void on_quit(int signal)
 {
-    g_state.quit = 1;
+    ((clstate_t*)g_state)->quit = 1;
     /* fprintf(stderr, "clamsmtpd: got signal to quit\n"); */
 }
 
@@ -427,12 +432,12 @@ static void connection_loop(int sock)
     int fd, i, x, r;
 
     /* Create the thread buffers */
-    threads = (clamsmtp_thread_t*)calloc(g_state.max_threads, sizeof(clamsmtp_thread_t));
+    threads = (clamsmtp_thread_t*)calloc(g_state->max_threads, sizeof(clamsmtp_thread_t));
     if(!threads)
         errx(1, "out of memory");
 
     /* Now loop and accept the connections */
-    while(!g_state.quit)
+    while(!g_state->quit)
     {
         fd = accept(sock, NULL, NULL);
         if(fd == -1)
@@ -449,23 +454,23 @@ static void connection_loop(int sock)
 
             default:
                 message(NULL, LOG_ERR, "couldn't accept a connection");
-                g_state.quit = 1;
+                ((clstate_t*)g_state)->quit = 1;
                 break;
             };
 
-            if(g_state.quit)
+            if(g_state->quit)
                 break;
 
             continue;
         }
 
         /* Set timeouts on client */
-        if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &g_state.timeout, sizeof(g_state.timeout)) < 0 ||
-           setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &g_state.timeout, sizeof(g_state.timeout)) < 0)
+        if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) < 0 ||
+           setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) < 0)
             message(NULL, LOG_WARNING, "couldn't set timeouts on incoming connection");
 
         /* Look for thread and also clean up others */
-        for(i = 0; i < g_state.max_threads; i++)
+        for(i = 0; i < g_state->max_threads; i++)
         {
             /* Find a thread to run or clean up old threads */
             if(threads[i].tid != 0)
@@ -499,7 +504,7 @@ static void connection_loop(int sock)
                 {
                     errno = r;
                     message(NULL, LOG_ERR, "couldn't create thread");
-                    g_state.quit = 1;
+                    ((clstate_t*)g_state)->quit = 1;
                     break;
                 }
 
@@ -512,7 +517,7 @@ static void connection_loop(int sock)
         /* Check to make sure we have a thread */
         if(fd != -1)
         {
-            messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_state.max_threads);
+            messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_state->max_threads);
 
             write(fd, SMTP_STARTBUSY, KL(SMTP_STARTBUSY));
             shutdown(fd, SHUT_RDWR);
@@ -524,7 +529,7 @@ static void connection_loop(int sock)
     messagex(NULL, LOG_DEBUG, "waiting for threads to quit");
 
     /* Quit all threads here */
-    for(i = 0; i < g_state.max_threads; i++)
+    for(i = 0; i < g_state->max_threads; i++)
     {
         /* Clean up quit threads */
         if(threads[i].tid != 0)
@@ -645,11 +650,11 @@ static int connect_out(clamsmtp_context_t* ctx)
         messagex(ctx, LOG_INFO, "accepted connection from: %s", buf);
 
     /* Create the server connection address */
-    outaddr = &(g_state.outaddr);
-    outname = g_state.outname;
+    outaddr = &(g_state->outaddr);
+    outname = g_state->outname;
 
     /* For transparent proxying we have to discover the address to connect to */
-    if(g_state.transparent)
+    if(g_state->transparent)
     {
         memset(&addr, 0, sizeof(addr));
         SANY_LEN(addr) = sizeof(addr);
@@ -681,7 +686,7 @@ static int connect_out(clamsmtp_context_t* ctx)
            outaddr->s.in.sin_addr.s_addr == 0)
         {
             /* Use the incoming IP as the default */
-            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
+            memcpy(&addr, &(g_state->outaddr), sizeof(addr));
             memcpy(&(addr.s.in.sin_addr), &(peeraddr.s.in.sin_addr), sizeof(addr.s.in.sin_addr));
             outaddr = &addr;
         }
@@ -690,7 +695,7 @@ static int connect_out(clamsmtp_context_t* ctx)
                 outaddr->s.in.in6.sin_addr.s_addr == 0)
         {
             /* Use the incoming IP as the default */
-            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
+            memcpy(&addr, &(g_state->outaddr), sizeof(addr));
             memcpy(&(addr.s.in.sin6_addr), &(peeraddr.s.in.sin6_addr), sizeof(addr.s.in.sin6_addr));
             outaddr = &addr;
         }
@@ -698,7 +703,7 @@ static int connect_out(clamsmtp_context_t* ctx)
     }
 
     /* Reparse name if possible */
-    if(outaddr != &(g_state.outaddr))
+    if(outaddr != &(g_state->outaddr))
     {
         if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)
             outname = "unknown";
@@ -995,7 +1000,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     int havefile = 0;
     int r, ret = 0;
 
-    strlcpy(buf, g_state.directory, MAXPATHLEN);
+    strlcpy(buf, g_state->directory, MAXPATHLEN);
     strlcat(buf, "/clamsmtpd.XXXXXX", MAXPATHLEN);
 
     /* transfer_to_file deletes the temp file on failure */
@@ -1034,7 +1039,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
      */
     case 1:
         if(clio_write_data(ctx, &(ctx->client),
-                           g_state.bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
+                           g_state->bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
             RETURN(-1);
 
         /* Any special post operation actions on the virus */
@@ -1047,7 +1052,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     };
 
 cleanup:
-    if(havefile && !g_state.debug_files)
+    if(havefile && !g_state->debug_files)
     {
         messagex(ctx, LOG_DEBUG, "deleting temporary file: %s", buf);
         unlink(buf);
@@ -1130,7 +1135,7 @@ static int connect_clam(clamsmtp_context_t* ctx)
     ASSERT(ctx);
     ASSERT(!clio_valid(&(ctx->clam)));
 
-    if(clio_connect(ctx, &(ctx->clam), &g_state.clamaddr, g_state.clamname) == -1)
+    if(clio_connect(ctx, &(ctx->clam), &(g_state->clamaddr), g_state->clamname) == -1)
        RETURN(-1);
 
     read_junk(ctx, ctx->clam.fd);
@@ -1234,10 +1239,10 @@ static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname)
     char buf[MAXPATHLEN];
     char* t;
 
-    if(!g_state.quarantine)
+    if(!g_state->quarantine)
         return 0;
 
-    strlcpy(buf, g_state.directory, MAXPATHLEN);
+    strlcpy(buf, g_state->directory, MAXPATHLEN);
     strlcat(buf, "/virus.", MAXPATHLEN);
 
     /* Points to null terminator */
@@ -1369,7 +1374,7 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
 
     while(fgets(ctx->line, LINE_LENGTH, file) != NULL)
     {
-        if(g_state.header && !header)
+        if(g_state->header && !header)
         {
             /*
              * The first blank line we see means the headers are done.
@@ -1377,7 +1382,7 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
              */
             if(is_blank_line(ctx->line))
             {
-                if(clio_write_data_raw(ctx, &(ctx->server), (char*)g_state.header, strlen(g_state.header)) == -1 ||
+                if(clio_write_data_raw(ctx, &(ctx->server), (char*)g_state->header, strlen(g_state->header)) == -1 ||
                    clio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
 

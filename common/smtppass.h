@@ -135,7 +135,7 @@ typedef struct clstate
 }
 clstate_t;
 
-extern clstate_t g_state;
+extern const clstate_t* g_state;
 
 void clstate_init(clstate_t* state);
 int clstate_parse_config(clstate_t* state, const char* configfile);

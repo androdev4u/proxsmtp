@@ -116,8 +116,8 @@ int clio_connect(clamsmtp_context_t* ctx, clio_t* io, struct sockaddr_any* sany,
     if((io->fd = socket(SANY_TYPE(*sany), SOCK_STREAM, 0)) == -1)
         RETURN(-1);
 
-    if(setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, &g_state.timeout, sizeof(g_state.timeout)) == -1 ||
-       setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, &g_state.timeout, sizeof(g_state.timeout)) == -1)
+    if(setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) == -1 ||
+       setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) == -1)
         messagex(ctx, LOG_WARNING, "couldn't set timeouts on connection");
 
     if(connect(io->fd, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
@@ -183,7 +183,7 @@ int clio_select(clamsmtp_context_t* ctx, clio_t** io)
 
     /* Select on the above */
 
-    switch(select(FD_SETSIZE, &mask, NULL, NULL, &g_state.timeout))
+    switch(select(FD_SETSIZE, &mask, NULL, NULL, &(g_state->timeout)))
     {
     case 0:
         messagex(ctx, LOG_ERR, "network operation timed out");
@@ -244,7 +244,7 @@ int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
                 if(errno == EINTR)
                 {
                     /* When the application is quiting */
-                    if(g_state.quit)
+                    if(g_state->quit)
                         return -1;
 
                     /* For any other signal we go again */
@@ -380,7 +380,7 @@ int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf,
             if(errno == EINTR)
             {
                 /* When the application is quiting */
-                if(g_state.quit)
+                if(g_state->quit)
                     return -1;
 
                 /* For any other signal we go again */

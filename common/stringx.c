@@ -67,14 +67,14 @@ static void vmessage(clamsmtp_context_t* ctx, int level, int err,
     char* m;
     int e = errno;
 
-    if(g_state.daemonized)
+    if(g_state->daemonized)
     {
         if(level >= LOG_DEBUG)
             return;
     }
     else
     {
-        if(g_state.debug_level < level)
+        if(g_state->debug_level < level)
             return;
     }
 
@@ -102,7 +102,7 @@ static void vmessage(clamsmtp_context_t* ctx, int level, int err,
     }
 
     /* Either to syslog or stderr */
-    if(g_state.daemonized)
+    if(g_state->daemonized)
         vsyslog(level, msg, ap);
     else
         vwarnx(msg, ap);
@@ -244,16 +244,16 @@ void plock()
 #endif
 
 #ifdef _DEBUG
-    r = pthread_mutex_trylock(&(g_state.mutex));
+    r = pthread_mutex_trylock(&(g_state->mutex));
     if(r == EBUSY)
     {
         wait = 1;
         message(NULL, LOG_DEBUG, "thread will block: %d", pthread_self());
-        r = pthread_mutex_lock(&(g_state.mutex));
+        r = pthread_mutex_lock(&(g_state->mutex));
     }
 
 #else
-    r = pthread_mutex_lock(&(g_state.mutex));
+    r = pthread_mutex_lock(&(g_state->mutex));
 
 #endif
 
@@ -273,7 +273,7 @@ void plock()
 
 void punlock()
 {
-    int r = pthread_mutex_unlock(&(g_state.mutex));
+    int r = pthread_mutex_unlock(&(g_state->mutex));
     if(r != 0)
     {
         errno = r;

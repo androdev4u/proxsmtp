@@ -141,7 +141,7 @@ const char* g_outname = NULL;
 struct sockaddr_any g_clamaddr;             /* Address for connecting to clamd */
 const char* g_clamname = DEFAULT_CLAMAV;
 
-const char* g_header = DEFAULT_HEADER;      /* The header to add to email */
+char* g_header = DEFAULT_HEADER;            /* The header to add to email */
 const char* g_directory = _PATH_TMP;        /* The directory for temp files */
 unsigned int g_unique_id = 0x00100000;      /* For connection ids */
 int g_bounce = 0;                           /* Send back a reject line */

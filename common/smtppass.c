@@ -176,7 +176,7 @@ static int connect_out(spctx_t* ctx);
 static int read_server_response(spctx_t* ctx);
 static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
-static int is_successful_rsp(char* line);
+static int is_successful_rsp(const char* line);
 
 /* Used externally in some cases */
 int sp_parse_option(const char* name, const char* option);
@@ -1060,7 +1060,7 @@ static char* parse_address(char* line)
     return trim_end(line);
 }
 
-static int is_successful_rsp(char* line)
+static int is_successful_rsp(const char* line)
 {
     /*
      * We check for both '250 xxx' type replies

@@ -90,7 +90,7 @@ clamsmtp_thread_t;
 #define SMTP_OK             "250 Ok" CRLF
 
 #define SMTP_DATA           "DATA" CRLF
-#define SMTP_START          "220 "
+#define SMTP_BANNER         "220 clamsmtp" CRLF
 #define SMTP_DELIMS         "\r\n\t :"
 
 #define HELO_CMD            "HELO"
@@ -768,6 +768,13 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
              * We intercept the first response we get from the server.
              * This allows us to change header so that it doesn't look
              * to the client server that we're in a wierd loop.
+             *
+             * In different situations using the local hostname or
+             * 'localhost' don't work because the receiving mail server
+             * expects one of those to be its own name. We use 'clamsmtp'
+             * instead. No properly configured server would have this
+             * as their domain name, and RFC 2821 allows us to use
+             * an arbitrary but identifying string.
              */
             if(first_rsp)
             {
@@ -777,17 +784,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 {
                     messagex(ctx, LOG_DEBUG, "intercepting initial response");
 
-                    strlcpy(ctx->line, SMTP_START, LINE_LENGTH);
-
-                    r = KL(SMTP_START);
-
-                    if(gethostname(ctx->line + r, LINE_LENGTH - r) == -1)
-                        strlcat(ctx->line, "clamsmtp", LINE_LENGTH);
-
-                    strlcat(ctx->line, CRLF, LINE_LENGTH);
-                    ctx->line[LINE_LENGTH - 1] = 0;
-
-                    if(write_data(ctx, &(ctx->client), ctx->line) == -1)
+                    if(write_data(ctx, &(ctx->client), SMTP_BANNER) == -1)
                         RETURN(-1);
 
                     /* Command handled */

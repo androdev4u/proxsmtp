@@ -49,6 +49,7 @@ typedef struct spstate
     struct timeval timeout;         /* Timeout for communication */
     int transparent;                /* Transparent proxying */
     const char* directory;          /* The temp directory */
+    const char* user;               /* User to run as */
 
     struct sockaddr_any outaddr;    /* The outgoing address */
     const char* outname;

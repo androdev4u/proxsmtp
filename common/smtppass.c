@@ -52,6 +52,7 @@
 #include <err.h>
 #include <paths.h>
 #include <stdarg.h>
+#include <pwd.h>
 
 #include "usuals.h"
 
@@ -129,7 +130,7 @@ spthread_t;
  * - Be sure that your configuration option needs to go into this
  *   file. More likely it'll go into clamsmtpd.c
  * - When adding configuration options follow the instructions in
- *   clamsmtpd.c, except add option to spstate_t (above) and parse in
+ *   clamsmtpd.c, except add option to spstate_t (sppriv.h) and parse in
  *   sp_parse_option (below)
  */
 
@@ -139,7 +140,7 @@ spthread_t;
 #define CFG_LISTENADDR      "Listen"
 #define CFG_TRANSPARENT     "TransparentProxy"
 #define CFG_DIRECTORY       "TempDirectory"
-
+#define CFG_USER            "User"
 
 /* -----------------------------------------------------------------------
  *  DEFAULT SETTINGS
@@ -156,7 +157,7 @@ spthread_t;
 
 spstate_t g_state;                          /* The state and configuration of the daemon */
 unsigned int g_unique_id = 0x00100000;      /* For connection ids */
-pthread_mutex_t g_mutex;                      /* The main mutex */
+pthread_mutex_t g_mutex;                    /* The main mutex */
 pthread_mutexattr_t g_mtxattr;
 
 
@@ -165,6 +166,7 @@ pthread_mutexattr_t g_mtxattr;
  */
 
 static void on_quit(int signal);
+static void drop_privileges();
 static void pid_file(const char* pidfile, int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
@@ -241,6 +243,9 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
         warnx("the " CFG_OUTADDR " option will be ignored when " CFG_TRANSPARENT " is enabled");
 
     sp_messagex(NULL, LOG_DEBUG, "starting up...");
+
+    /* Drop privileges before daemonizing */
+    drop_privileges();
 
     /* When set to this we daemonize */
     if(g_state.debug_level == -1)
@@ -341,6 +346,47 @@ static void on_quit(int signal)
 {
     g_state.quit = 1;
 }
+
+static void drop_privileges()
+{
+    char* t;
+    struct passwd* pw;
+    uid_t uid;
+
+    if(g_state.user)
+    {
+        if(geteuid() != 0)
+        {
+            sp_messagex(NULL, LOG_WARNING, "must be started as root to switch to user: %s", g_state.user);
+            return;
+        }
+
+        uid = strtol(g_state.user, &t, 10);
+        if(!t[0]) /* successful parse */
+            pw = getpwuid(uid);
+        else  /* must be a name */
+            pw = getpwnam(g_state.user);
+
+        if(pw == NULL)
+            errx(1, "couldn't look up user: %s", g_state.user);
+
+        if(setgid(pw->pw_gid) == -1)
+            err(1, "unable to switch group: %d", pw->pw_gid);
+
+        if(setuid(pw->pw_uid) == -1)
+            err(1, "unable to switch user: %d", pw->pw_uid);
+
+        /* A paranoia check */
+        if(setreuid(-1, 0) == 0)
+            err(1, "unable to completely drop privileges");
+
+        sp_messagex(NULL, LOG_DEBUG, "switched to user %s (uid %d, gid %d)", g_state.user, pw->pw_uid, pw->pw_gid);
+    }
+
+    if(geteuid() == 0)
+        sp_messagex(NULL, LOG_WARNING, "running as root is NOT recommended");
+}
+
 
 static void pid_file(const char* pidfile, int write)
 {
@@ -1413,6 +1459,14 @@ int sp_parse_option(const char* name, const char* value)
         ret = 1;
     }
 
+    else if(strcasecmp(CFG_USER, name) == 0)
+    {
+        if(strlen(value) == 0)
+            errx(2, "invalid setting: " CFG_USER);
+        g_state.user = value;
+        ret = 1;
+    }
+
     /* Always pass through to program */
     if(cb_parse_option(name, value) == 1)
         ret = 1;
@@ -1457,7 +1511,7 @@ static int parse_config_file(const char* configfile)
 
     /* Double null terminate the data */
     p = g_state._p;
-    p[len] = 0;
+    p[len] =  '\n';
     p[len + 1] = 0;
 
     n = g_state._p;

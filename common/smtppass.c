@@ -1227,6 +1227,7 @@ static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* l
         return -1;
     }
 
+    add_to_logline(logline, "status=", "CLAMAV-ERROR");
     messagex(ctx, LOG_ERR, "unexepected response from clamd: %s", ctx->line);
     return -1;
 }

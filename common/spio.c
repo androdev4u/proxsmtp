@@ -478,7 +478,7 @@ int spio_write_data(spctx_t* ctx, spio_t* io, const char* data)
 
     if(!spio_valid(io))
     {
-        sp_message(ctx, LOG_ERR, "connection closed. can't write data.");
+        sp_message(ctx, LOG_ERR, "connection closed. can't write data");
         return -1;
     }
 

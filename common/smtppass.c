@@ -1388,8 +1388,11 @@ static int read_server_response(spctx_t* ctx)
 
 static void do_server_noop(spctx_t* ctx)
 {
-    if(spio_write_data(ctx, &(ctx->server), SMTP_NOOP) != -1)
-        spio_read_line(ctx, &(ctx->server), SPIO_DISCARD);
+    if(spio_valid(&(ctx->server)))
+    {
+        if(spio_write_data(ctx, &(ctx->server), SMTP_NOOP) != -1)
+            spio_read_line(ctx, &(ctx->server), SPIO_DISCARD);
+    }
 }
 
 void sp_setup_forked(spctx_t* ctx, int file)

@@ -1,7 +1,6 @@
 1.0  ?????
-
   - Added XCLIENT support.
-  - Drop XCLIENT and XFORWARD commands coming in from clients for security.
+  - Drop XCLIENT commands coming in from clients for security.
   - Added big scary warnings to the sample scripts about escaping variables.
   - Documentation fixes [Olivier Beyssac]
 

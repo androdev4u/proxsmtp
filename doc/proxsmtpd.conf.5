@@ -123,6 +123,10 @@ The user to run as. If this option is specified then
 .Xr proxsmtpd 8
 must be started as root. It will then drop root privileges and run as the 
 specified user. The user can either be a name or a numerical user id.
+.It Ar XClient
+Send an XCLIENT command to the receiving server. This is useful for forwarding
+client addresses and connection info to servers that support this feature.
+[ Default: off ]
 .El
 .Sh ADDRESSES
 Addresses can be specified in multiple formats:

@@ -122,7 +122,7 @@ clamsmtp_thread_t;
 #define CLAM_CONNECT        "SESSION\nPING\n"
 #define CLAM_DISCONNECT     "END\n"
 
-#define DEFAULT_CONFIG      CONF_PREFIX "/httpauthd.conf"
+#define DEFAULT_CONFIG      CONF_PREFIX "/clamsmtpd.conf"
 
 /* -----------------------------------------------------------------------
  *  GLOBALS

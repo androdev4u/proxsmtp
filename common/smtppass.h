@@ -119,7 +119,6 @@ typedef struct clstate
 
 	const char* header;	            /* The header to add to email */
 	const char* directory;     		/* The directory for temp files */
-    const char* pidfile;            /* The process id file */
 	int bounce;                     /* Send back a reject line */
 	int quarantine;                 /* Leave virus files in temp dir */
 	int debug_files;                /* Leave all files in temp dir */

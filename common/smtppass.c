@@ -138,7 +138,7 @@ unsigned int g_unique_id = 0x00100000;      /* For connection ids */
 
 static void usage();
 static void on_quit(int signal);
-static void pid_file(int write);
+static void pid_file(const char* pidfile, int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
 static int smtp_passthru(clamsmtp_context_t* ctx);
@@ -162,6 +162,7 @@ static void read_junk(clamsmtp_context_t* ctx, int fd);
 int main(int argc, char* argv[])
 {
     const char* configfile = DEFAULT_CONFIG;
+    const char* pidfile = NULL;
     int warnargs = 0;
     int sock;
     int true = 1;
@@ -231,7 +232,7 @@ int main(int argc, char* argv[])
 
         /* Write out a pid file */
         case 'p':
-            g_state.pidfile = optarg;
+            pidfile = optarg;
             break;
 
         /* The timeout */
@@ -347,15 +348,15 @@ int main(int argc, char* argv[])
     siginterrupt(SIGINT, 1);
     siginterrupt(SIGTERM, 1);
 
-    if(g_state.pidfile)
-        pid_file(1);
+    if(pidfile)
+        pid_file(pidfile, 1);
 
     messagex(NULL, LOG_DEBUG, "accepting connections");
 
     connection_loop(sock);
 
-    if(g_state.pidfile)
-        pid_file(0);
+    if(pidfile)
+        pid_file(pidfile, 0);
 
     messagex(NULL, LOG_DEBUG, "stopped");
 
@@ -375,37 +376,37 @@ static void on_quit(int signal)
 
 static void usage()
 {
-    fprintf(stderr, "usage: clamsmtpd [-d debuglevel] [-f configfile] \n");
+    fprintf(stderr, "usage: clamsmtpd [-d debuglevel] [-f configfile] [-p pidfile]\n");
     fprintf(stderr, "       clamsmtpd -v\n");
     exit(2);
 }
 
-static void pid_file(int write)
+static void pid_file(const char* pidfile, int write)
 {
     if(write)
     {
-        FILE* f = fopen(g_state.pidfile, "w");
+        FILE* f = fopen(pidfile, "w");
         if(f == NULL)
         {
-            message(NULL, LOG_ERR, "couldn't open pid file: %s", g_state.pidfile);
+            message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
         }
         else
         {
             fprintf(f, "%d\n", (int)getpid());
 
             if(ferror(f))
-                message(NULL, LOG_ERR, "couldn't write to pid file: %s", g_state.pidfile);
+                message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
 
             fclose(f);
         }
 
-        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", g_state.pidfile);
+        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
     }
 
     else
     {
-        unlink(g_state.pidfile);
-        messagex(NULL, LOG_DEBUG, "removed pid file: %s", g_state.pidfile);
+        unlink(pidfile);
+        messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
     }
 }
 

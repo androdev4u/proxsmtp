@@ -39,6 +39,17 @@
 #ifndef __CLAMSMTPD_H__
 #define __CLAMSMTPD_H__
 
+#define BUF_LEN 256
+
+typedef struct clio
+{
+    int fd;
+    const char* name;
+    unsigned char buf[BUF_LEN];
+    size_t buflen;
+}
+clio_t;
+
 /*
  * A generous maximum line length. It needs to be longer than
  * a full path on this system can be, because we pass the file
@@ -55,9 +66,9 @@ typedef struct clamsmtp_context
 {
     unsigned int id;        /* Identifier for the connection */
 
-    int client;             /* Connection to client */
-    int server;             /* Connection to server */
-    int clam;               /* Connection to clamd */
+    clio_t client;          /* Connection to client */
+    clio_t server;          /* Connection to server */
+    clio_t clam;            /* Connection to clamd */
 
     char line[LINE_LENGTH]; /* Working buffer */
     int linelen;            /* Length of valid data in above */
@@ -67,5 +78,25 @@ clamsmtp_context_t;
 extern int g_daemonized;              /* Currently running as a daemon */
 extern int g_debuglevel;              /* what gets logged to console */
 extern pthread_mutex_t g_mutex;       /* The main mutex */
+extern struct timeval g_timeout;
+extern int g_quit;
+
+struct sockaddr_any;
+#define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (LINE_LENGTH - 2))
+#define RETURN(x)               { ret = x; goto cleanup; }
+
+
+#define CLIO_TRIM           0x00000001
+#define CLIO_DISCARD        0x00000002
+#define CLIO_QUIET          0x00000004
+#define clio_valid(io)      ((io)->fd != -1)
+
+void clio_init(clio_t* io, const char* name);
+int clio_connect(clamsmtp_context_t* ctx, clio_t* io, struct sockaddr_any* sany, const char* addrname);
+void clio_disconnect(clamsmtp_context_t* ctx, clio_t* io);
+int clio_select(clamsmtp_context_t* ctx, clio_t** io);
+int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int trim);
+int clio_write_data(clamsmtp_context_t* ctx, clio_t* io, const char* data);
+int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf, int len);
 
 #endif /* __CLAMSMTPD_H__ */

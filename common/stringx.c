@@ -126,64 +126,6 @@ void message(clamsmtp_context_t* ctx, int level, const char* msg, ...)
     va_end(ap);
 }
 
-#define MAX_LOG_LINE    79
-
-void log_fd_data(clamsmtp_context_t* ctx, const char* data, int* fd, int read)
-{
-    #define offsetof(s, m)  ((size_t)&(((s*)0)->m))
-    #define ismember(o, m)  (((char*)(m)) < (((char*)(o)) + sizeof(*(o))))
-    #define ptrdiff(o, t)
-
-    char prefix[16];
-
-    ASSERT(ctx);
-    ASSERT(ismember(ctx, fd));
-
-    switch((char*)fd - (char*)ctx)
-    {
-    case offsetof(clamsmtp_context_t, client):
-        strcpy(prefix, "CLIENT ");
-        break;
-    case offsetof(clamsmtp_context_t, server):
-        strcpy(prefix, "SERVER ");
-        break;
-    case offsetof(clamsmtp_context_t, clam):
-        strcpy(prefix, "CLAM   ");
-        break;
-    default:
-        strcpy(prefix, "????   ");
-        break;
-    }
-
-    strcat(prefix, read ? "< " : "> ");
-    log_data(ctx, data, prefix);
-}
-
-
-void log_data(clamsmtp_context_t* ctx, const char* data, const char* prefix)
-{
-    char buf[MAX_LOG_LINE + 1];
-    int pos, len;
-
-    for(;;)
-    {
-        data += strspn(data, "\r\n");
-
-        if(!*data)
-            break;
-
-        pos = strcspn(data, "\r\n");
-
-        len = pos < MAX_LOG_LINE ? pos : MAX_LOG_LINE;
-        memcpy(buf, data, len);
-        buf[len] = 0;
-
-        messagex(ctx, LOG_DEBUG, "%s%s", prefix, buf);
-
-        data += pos;
-    }
-}
-
 /* ----------------------------------------------------------------------------------
  *  Parsing
  */

@@ -70,9 +70,6 @@ typedef struct clamsmtp_thread
 }
 clamsmtp_thread_t;
 
-#define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (LINE_LENGTH - 2))
-#define RETURN(x)               { ret = x; goto cleanup; }
-
 /* -----------------------------------------------------------------------
  *  STRINGS
  */
@@ -113,7 +110,7 @@ clamsmtp_thread_t;
 #define STARTTLS_CMD        "STARTTLS"
 #define BDAT_CMD            "BDAT"
 
-#define DATA_END_SIG        CRLF "." CRLF
+#define DATA_END_SIG        "." CRLF
 
 #define DATA_RSP            "354"
 #define OK_RSP              "250"
@@ -189,11 +186,7 @@ static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname);
 static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename);
 static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* logline);
 static int read_server_response(clamsmtp_context_t* ctx);
-static int connect_socket(clamsmtp_context_t* ctx, struct sockaddr_any* sany, const char* addrname);
 static void read_junk(clamsmtp_context_t* ctx, int fd);
-static int read_line(clamsmtp_context_t* ctx, int* fd, int trim);
-static int write_data(clamsmtp_context_t* ctx, int* fd, unsigned char* buf);
-static int write_data_raw(clamsmtp_context_t* ctx, int* fd, unsigned char* buf, int len);
 
 
 /* ----------------------------------------------------------------------------------
@@ -529,9 +522,10 @@ static void connection_loop(int sock)
         {
             messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_maxthreads);
 
-            write_data(NULL, &fd, SMTP_STARTBUSY);
+            write(fd, SMTP_STARTBUSY, KL(SMTP_STARTBUSY));
             shutdown(fd, SHUT_RDWR);
             close(fd);
+            fd = -1;
         }
     }
 
@@ -581,25 +575,26 @@ static void* thread_main(void* arg)
 
     memset(&ctx, 0, sizeof(ctx));
 
-    ctx.server = -1;
-    ctx.clam = -1;
+    clio_init(&(ctx.server), "SERVER");
+    clio_init(&(ctx.client), "CLIENT");
+    clio_init(&(ctx.clam),   "CLAM  ");
 
     plock();
         /* Assign a unique id to the connection */
         ctx.id = g_unique_id++;
 
         /* Get the client socket */
-        ctx.client = thread->fd;
+        ctx.client.fd = thread->fd;
     punlock();
 
-    ASSERT(ctx.client != -1);
-    messagex(&ctx, LOG_DEBUG, "processing %d on thread %x", ctx.client, (int)pthread_self());
+    ASSERT(ctx.client.fd != -1);
+    messagex(&ctx, LOG_DEBUG, "processing %d on thread %x", ctx.client.fd, (int)pthread_self());
 
     memset(&addr, 0, sizeof(addr));
     SANY_LEN(addr) = sizeof(addr);
 
     /* Get the peer name */
-    if(getpeername(ctx.client, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1 ||
+    if(getpeername(ctx.client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1 ||
        sock_any_ntop(&addr, buf, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
         message(&ctx, LOG_WARNING, "couldn't get peer address");
     else
@@ -626,7 +621,7 @@ static void* thread_main(void* arg)
 
 
     /* Connect to the server */
-    if((ctx.server = connect_socket(&ctx, outaddr, outname)) == -1)
+    if(clio_connect(&ctx, &(ctx.server), outaddr, outname) == -1)
         RETURN(-1);
 
     /* ... and to the AV daemon */
@@ -643,22 +638,11 @@ cleanup:
     disconnect_clam(&ctx);
 
     /* Let the client know about fatal errors */
-    if(!processing && ret == -1 && ctx.client != -1)
-       write_data(&ctx, &(ctx.client), SMTP_STARTFAILED);
+    if(!processing && ret == -1 && clio_valid(&(ctx.client)))
+       clio_write_data(&ctx, &(ctx.client), SMTP_STARTFAILED);
 
-    if(ctx.client != -1)
-    {
-        shutdown(ctx.client, SHUT_RDWR);
-        close(ctx.client);
-        messagex(&ctx, LOG_NOTICE, "closed client connection");
-    }
-
-    if(ctx.server != -1)
-    {
-        shutdown(ctx.server, SHUT_RDWR);
-        close(ctx.server);
-        messagex(&ctx, LOG_DEBUG, "closed server connection");
-    }
+    clio_disconnect(&ctx, &(ctx.client));
+    clio_disconnect(&ctx, &(ctx.server));
 
     /* mark this as done */
     plock();
@@ -675,41 +659,31 @@ cleanup:
 
 static int smtp_passthru(clamsmtp_context_t* ctx)
 {
+    clio_t* io = NULL;
     char logline[LINE_LENGTH];
     int r, ret = 0;
-	fd_set mask;
     int neterror = 0;
 
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
     int filter_ehlo = 0;    /* Filtering parts of an EHLO extensions response */
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
 
-    ASSERT(ctx->clam != -1 && ctx->server != -1);
+    ASSERT(clio_valid(&(ctx->clam)) &&
+           clio_valid(&(ctx->clam)));
     logline[0] = 0;
 
     for(;;)
     {
-		FD_ZERO(&mask);
-
-    	FD_SET(ctx->client, &mask);
-    	FD_SET(ctx->server, &mask);
-
-		switch(select(FD_SETSIZE, &mask, NULL, NULL, &g_timeout))
-		{
-		case 0:
-			messagex(ctx, LOG_ERR, "network operation timed out");
+        if(clio_select(ctx, &io) == -1)
+        {
             neterror = 1;
             RETURN(-1);
-		case -1:
-			message(ctx, LOG_ERR, "couldn't select on sockets");
-            neterror = 1;
-            RETURN(-1);
-		};
+		}
 
         /* Client has data available, read a line and process */
-        if(FD_ISSET(ctx->client, &mask))
+        if(io == &(ctx->client))
         {
-            if(read_line(ctx, &(ctx->client), 0) == -1)
+            if(clio_read_line(ctx, &(ctx->client), CLIO_DISCARD) == -1)
                 RETURN(-1);
 
             /* Client disconnected, we're done */
@@ -719,7 +693,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             /* We don't let clients send really long lines */
             if(LINE_TOO_LONG(ctx))
             {
-                if(write_data(ctx, &(ctx->client), SMTP_TOOLONG) == -1)
+                if(clio_write_data(ctx, &(ctx->client), SMTP_TOOLONG) == -1)
                     RETURN(-1);
 
                 continue;
@@ -733,7 +707,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             if(is_first_word(ctx->line, DATA_CMD, KL(DATA_CMD)))
             {
                 /* Send back the intermediate response to the client */
-                if(write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
+                if(clio_write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
                     RETURN(-1);
 
                 /*
@@ -790,7 +764,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             {
                 messagex(ctx, LOG_DEBUG, "ESMTP feature not supported");
 
-                if(write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
+                if(clio_write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
                     RETURN(-1);
 
                 /* Command handled */
@@ -810,16 +784,16 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 logline[0] = 0;
 
             /* All other commands just get passed through to server */
-            if(write_data(ctx, &(ctx->server), ctx->line) == -1)
+            if(clio_write_data(ctx, &(ctx->server), ctx->line) == -1)
                 RETURN(-1);
 
             continue;
         }
 
         /* Server has data available, read a line and forward */
-        if(FD_ISSET(ctx->server, &mask))
+        if(io == &(ctx->server))
         {
-            if(read_line(ctx, &(ctx->server), 0) == -1)
+            if(clio_read_line(ctx, &(ctx->server), CLIO_DISCARD) == -1)
                 RETURN(-1);
 
             if(ctx->linelen == 0)
@@ -848,7 +822,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 {
                     messagex(ctx, LOG_DEBUG, "intercepting initial response");
 
-                    if(write_data(ctx, &(ctx->client), SMTP_BANNER) == -1)
+                    if(clio_write_data(ctx, &(ctx->client), SMTP_BANNER) == -1)
                         RETURN(-1);
 
                     /* Command handled */
@@ -870,7 +844,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 {
                     messagex(ctx, LOG_DEBUG, "intercepting host response");
 
-                    if(write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
+                    if(clio_write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
                         RETURN(-1);
 
                     continue;
@@ -881,7 +855,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 {
                     messagex(ctx, LOG_DEBUG, "intercepting host response");
 
-                    if(write_data(ctx, &(ctx->client), SMTP_EHLO_RSP) == -1)
+                    if(clio_write_data(ctx, &(ctx->client), SMTP_EHLO_RSP) == -1)
                         RETURN(-1);
 
                     continue;
@@ -909,7 +883,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 }
             }
 
-            if(write_data(ctx, &(ctx->client), ctx->line) == -1)
+            if(clio_write_data(ctx, &(ctx->client), ctx->line) == -1)
                 RETURN(-1);
 
             continue;
@@ -918,8 +892,8 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
 cleanup:
 
-    if(!neterror && ret == -1 && ctx->client != -1)
-       write_data(ctx, &(ctx->client), SMTP_FAILED);
+    if(!neterror && ret == -1 && clio_valid(&(ctx->client)))
+       clio_write_data(ctx, &(ctx->client), SMTP_FAILED);
 
     return ret;
 }
@@ -967,7 +941,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     strlcat(buf, "/clamsmtpd.XXXXXX", MAXPATHLEN);
 
     /* transfer_to_file deletes the temp file on failure */
-    if((r = transfer_to_file(ctx, buf)) > 0)
+    if((r = transfer_to_file(ctx, buf)) != -1)
     {
         havefile = 1;
         r = clam_scan_file(ctx, buf, logline);
@@ -981,7 +955,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
      * the server about any of this yet
      */
     case -1:
-        if(write_data(ctx, &(ctx->client), SMTP_FAILED))
+        if(clio_write_data(ctx, &(ctx->client), SMTP_FAILED))
             RETURN(-1);
         break;
 
@@ -1001,8 +975,8 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
      * choose to reset the connection to reuse it if it wants.
      */
     case 1:
-        if(write_data(ctx, &(ctx->client),
-                   g_bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
+        if(clio_write_data(ctx, &(ctx->client),
+                           g_bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
             RETURN(-1);
 
         /* Any special post operation actions on the virus */
@@ -1030,7 +1004,7 @@ static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
     ASSERT(tempname);
 
     /* Ask the server for permission to send data */
-    if(write_data(ctx, &(ctx->server), SMTP_DATA) == -1)
+    if(clio_write_data(ctx, &(ctx->server), SMTP_DATA) == -1)
         return -1;
 
     if(read_server_response(ctx) == -1)
@@ -1039,7 +1013,7 @@ static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
     /* If server returns an error then tell the client */
     if(!is_first_word(ctx->line, DATA_RSP, KL(DATA_RSP)))
     {
-        if(write_data(ctx, &(ctx->client), ctx->line) == -1)
+        if(clio_write_data(ctx, &(ctx->client), ctx->line) == -1)
             return -1;
 
         messagex(ctx, LOG_DEBUG, "server refused data transfer");
@@ -1051,7 +1025,7 @@ static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
     if(transfer_from_file(ctx, tempname) == -1)
     {
         /* Tell the client it went wrong */
-        write_data(ctx, &(ctx->client), SMTP_FAILED);
+        clio_write_data(ctx, &(ctx->client), SMTP_FAILED);
         return -1;
     }
 
@@ -1059,7 +1033,7 @@ static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
     if(read_server_response(ctx) == -1)
         return -1;
 
-    if(write_data(ctx, &(ctx->client), ctx->line) == -1)
+    if(clio_write_data(ctx, &(ctx->client), ctx->line) == -1)
         return -1;
 
     return 0;
@@ -1068,7 +1042,7 @@ static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
 static int read_server_response(clamsmtp_context_t* ctx)
 {
     /* Read response line from the server */
-    if(read_line(ctx, &(ctx->server), 0) == -1)
+    if(clio_read_line(ctx, &(ctx->server), CLIO_DISCARD) == -1)
         return -1;
 
     if(ctx->linelen == 0)
@@ -1076,7 +1050,7 @@ static int read_server_response(clamsmtp_context_t* ctx)
         messagex(ctx, LOG_ERR, "server disconnected unexpectedly");
 
         /* Tell the client it went wrong */
-        write_data(ctx, &(ctx->client), SMTP_FAILED);
+        clio_write_data(ctx, &(ctx->client), SMTP_FAILED);
         return 0;
     }
 
@@ -1096,22 +1070,22 @@ static int connect_clam(clamsmtp_context_t* ctx)
     int ret = 0;
 
     ASSERT(ctx);
-    ASSERT(ctx->clam == -1);
+    ASSERT(!clio_valid(&(ctx->clam)));
 
-    if((ctx->clam = connect_socket(ctx, &g_clamaddr, g_clamname)) == -1)
+    if(clio_connect(ctx, &(ctx->clam), &g_clamaddr, g_clamname) == -1)
        RETURN(-1);
 
-    read_junk(ctx, ctx->clam);
+    read_junk(ctx, ctx->clam.fd);
 
     /* Send a session and a check header to ClamAV */
 
-    if(write_data(ctx, &(ctx->clam), "SESSION\n") == -1)
+    if(clio_write_data(ctx, &(ctx->clam), "SESSION\n") == -1)
         RETURN(-1);
 
-    read_junk(ctx, ctx->clam);
+    read_junk(ctx, ctx->clam.fd);
 /*
-    if(write_data(ctx, &(ctx->clam), "PING\n") == -1 ||
-       read_line(ctx, &(ctx->clam), 1) == -1)
+    if(clio_write_data(ctx, &(ctx->clam), "PING\n") == -1 ||
+       clio_read_line(ctx, &(ctx->clam), CLIO_DISCARD | CLIO_TRIM) == -1)
         RETURN(-1);
 
     if(strcmp(ctx->line, CONNECT_RESPONSE) != 0)
@@ -1120,35 +1094,24 @@ static int connect_clam(clamsmtp_context_t* ctx)
         RETURN(-1);
     }
 */
-    messagex(ctx, LOG_DEBUG, "connected to clamd: %s", g_clamname);
 
 cleanup:
 
     if(ret < 0)
-    {
-        if(ctx->clam != -1)
-        {
-            close(ctx->clam);
-            ctx->clam = -1;
-        }
-    }
+        clio_disconnect(ctx, &(ctx->clam));
 
     return ret;
 }
 
 static int disconnect_clam(clamsmtp_context_t* ctx)
 {
-    if(ctx->clam == -1)
+    if(!clio_valid(&(ctx->clam)))
         return 0;
 
-    if(write_data(ctx, &(ctx->clam), CLAM_DISCONNECT) != -1)
-        read_junk(ctx, ctx->clam);
+    if(clio_write_data(ctx, &(ctx->clam), CLAM_DISCONNECT) != -1)
+        read_junk(ctx, ctx->clam.fd);
 
-    shutdown(ctx->clam, SHUT_RDWR);
-    close(ctx->clam);
-    ctx->clam = -1;
-
-    messagex(ctx, LOG_DEBUG, "disconnected from clamd");
+    clio_disconnect(ctx, &(ctx->clam));
     return 0;
 }
 
@@ -1162,10 +1125,10 @@ static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* l
     strcat(ctx->line, tempname);
     strcat(ctx->line, "\n");
 
-    if(write_data(ctx, &(ctx->clam), ctx->line) == -1)
+    if(clio_write_data(ctx, &(ctx->clam), ctx->line) == -1)
         return -1;
 
-    len = read_line(ctx, &(ctx->clam), 1);
+    len = clio_read_line(ctx, &(ctx->clam), CLIO_DISCARD | CLIO_TRIM);
     if(len == 0)
     {
         messagex(ctx, LOG_ERR, "clamd disconnected unexpectedly");
@@ -1262,17 +1225,11 @@ static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname)
 
 static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname)
 {
-    /* If there aren't any lines in the message and just an
-       end signature then start at the dot. */
-    const char* topsig = strchr(DATA_END_SIG, '.');
-    const char* cursig = topsig;
     FILE* tfile = NULL;
     int tfd = -1;
+    int ended_crlf = 1;     /* If the last line ended with a CRLF */
     int ret = 0;
-    char ch;
     int count = 0;
-
-    ASSERT(topsig != NULL);
 
     if((tfd = mkstemp(tempname)) == -1 ||
        (tfile = fdopen(tfd, "w")) == NULL)
@@ -1285,48 +1242,25 @@ static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname)
 
     for(;;)
     {
-        switch(read(ctx->client, &ch, 1))
+        switch(clio_read_line(ctx, &(ctx->client), CLIO_QUIET))
         {
         case 0:
             messagex(ctx, LOG_ERR, "unexpected end of data from client");
             RETURN(-1);
 
         case -1:
-            message(ctx, LOG_ERR, "error reading from client");
+            /* Message already printed */
             RETURN(-1);
         };
 
-        if((char)ch != *cursig)
-        {
-            /* Write out the part of the sig we kept back */
-            if(cursig != topsig)
-            {
-                /* We check errors on this later */
-                fwrite(topsig, 1, cursig - topsig, tfile);
-                count += (cursig - topsig);
-            }
+        if(ended_crlf && strcmp(ctx->line, DATA_END_SIG) == 0)
+            break;
 
-            /* We've seen at least one char not in the sig */
-            cursig = topsig = DATA_END_SIG;
-        }
+        /* We check errors on this later */
+        fwrite(ctx->line, 1, ctx->linelen, tfile);
 
-        /* The sig may have been reset above so check again */
-        if((char)ch == *cursig)
-        {
-            cursig++;
-
-            if(!*cursig)
-            {
-                /* We found end of data */
-                break;
-            }
-        }
-
-        else
-        {
-            fputc(ch, tfile);
-            count++;
-        }
+        /* Check if this line ended with a CRLF */
+        ended_crlf = (strcmp(CRLF, ctx->line + (ctx->linelen - KL(CRLF))) == 0);
     }
 
     if(ferror(tfile))
@@ -1384,15 +1318,15 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
              */
             if(is_blank_line(ctx->line))
             {
-                if(write_data_raw(ctx, &(ctx->server), (char*)g_header, strlen(g_header)) == -1 ||
-                   write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
+                if(clio_write_data_raw(ctx, &(ctx->server), (char*)g_header, strlen(g_header)) == -1 ||
+                   clio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
 
                 header = 1;
             }
         }
 
-        if(write_data_raw(ctx, &(ctx->server), ctx->line, strlen(ctx->line)) == -1)
+        if(clio_write_data_raw(ctx, &(ctx->server), ctx->line, strlen(ctx->line)) == -1)
             RETURN(-1);
     }
 
@@ -1402,7 +1336,7 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
         RETURN(-1);
     }
 
-    if(write_data(ctx, &(ctx->server), DATA_END_SIG) == -1)
+    if(clio_write_data(ctx, &(ctx->server), DATA_END_SIG) == -1)
         RETURN(-1);
 
     messagex(ctx, LOG_DEBUG, "sent email data");
@@ -1419,36 +1353,6 @@ cleanup:
 /* ----------------------------------------------------------------------------------
  *  NETWORKING
  */
-
-static int connect_socket(clamsmtp_context_t* ctx, struct sockaddr_any* sany, const char* addrname)
-{
-    int sock = -1;
-    int ret = 0;
-
-    if((sock = socket(SANY_TYPE(*sany), SOCK_STREAM, 0)) == -1)
-        RETURN(-1);
-
-    if(setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &g_timeout, sizeof(g_timeout)) == -1 ||
-       setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &g_timeout, sizeof(g_timeout)) == -1)
-        messagex(ctx, LOG_WARNING, "couldn't set timeouts on connection");
-
-    if(connect(sock, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
-        RETURN(-1);
-
-cleanup:
-    if(ret < 0)
-    {
-        if(sock != -1)
-            close(sock);
-
-        message(ctx, LOG_ERR, "couldn't connect to: %s", addrname);
-        return -1;
-    }
-
-    ASSERT(sock != -1);
-    messagex(ctx, LOG_DEBUG, "connected to: %s", addrname);
-    return sock;
-}
 
 static void read_junk(clamsmtp_context_t* ctx, int fd)
 {
@@ -1480,161 +1384,4 @@ static void read_junk(clamsmtp_context_t* ctx, int fd)
     }
 
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK);
-}
-
-static int read_line(clamsmtp_context_t* ctx, int* fd, int trim)
-{
-    int l;
-    char* t;
-    const char* e;
-
-    if(*fd == -1)
-    {
-        messagex(ctx, LOG_WARNING, "tried to read from a closed connection");
-        return 0;
-    }
-
-    ctx->line[0] = 0;
-    e = ctx->line + (LINE_LENGTH - 1);
-
-    for(t = ctx->line; t < e; ++t)
-    {
-        l = read(*fd, (void*)t, sizeof(char));
-
-        /* We got a character */
-        if(l == 1)
-        {
-            /* End of line */
-            if(*t == '\n')
-            {
-                ++t;
-                break;
-            }
-
-            /* We skip spaces at the beginning if trimming */
-            if(trim && t == ctx->line && isspace(*t))
-                continue;
-        }
-
-        /* If it's the end of file then return that */
-        else if(l == 0)
-        {
-            /* Put in an extra line if there was anything */
-            if(t > ctx->line && !trim)
-            {
-                *t = '\n';
-                ++t;
-            }
-
-            break;
-        }
-
-        else if(l == -1)
-        {
-            if(errno == EINTR)
-            {
-                /* When the application is quiting */
-                if(g_quit)
-                    return -1;
-
-                /* For any other signal we go again */
-                continue;
-            }
-
-            /*
-             * The basic logic here is that if we've had a fatal error
-             * reading from the socket once then we shut it down as it's
-             * no good trying to read from again later.
-             */
-            shutdown(*fd, SHUT_RDWR);
-            close(*fd);
-            *fd = -1;
-
-            if(errno == EAGAIN)
-                messagex(ctx, LOG_WARNING, "network read operation timed out");
-            else
-                message(ctx, LOG_ERR, "couldn't read data from socket");
-
-            return -1;
-        }
-    }
-
-    *t = 0;
-
-    if(trim)
-    {
-        while(t > ctx->line && isspace(*(t - 1)))
-        {
-            --t;
-            *t = 0;
-        }
-    }
-
-    ctx->linelen = t - ctx->line;
-    log_fd_data(ctx, ctx->line, fd, 1);
-
-    return ctx->linelen;
-}
-
-static int write_data_raw(clamsmtp_context_t* ctx, int* fd, unsigned char* buf, int len)
-{
-    int r;
-
-    while(len > 0)
-    {
-        r = write(*fd, buf, len);
-
-        if(r > 0)
-        {
-            buf += r;
-            len -= r;
-        }
-
-        else if(r == -1)
-        {
-            if(errno == EINTR)
-            {
-                /* When the application is quiting */
-                if(g_quit)
-                    return -1;
-
-                /* For any other signal we go again */
-                continue;
-            }
-
-            /*
-             * The basic logic here is that if we've had a fatal error
-             * writing to the socket once then we shut it down as it's
-             * no good trying to write to it again later.
-             */
-            shutdown(*fd, SHUT_RDWR);
-            close(*fd);
-            *fd = -1;
-
-            if(errno == EAGAIN)
-                messagex(ctx, LOG_WARNING, "network write operation timed out");
-            else
-                message(ctx, LOG_ERR, "couldn't write data to socket");
-
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
-static int write_data(clamsmtp_context_t* ctx, int* fd, unsigned char* buf)
-{
-    int len = strlen(buf);
-
-    if(*fd == -1)
-    {
-        message(ctx, LOG_ERR, "connection closed. can't write data.");
-        return -1;
-    }
-
-    if(ctx != NULL)
-        log_fd_data(ctx, buf, fd, 0);
-
-    return write_data_raw(ctx, fd, buf, len);
 }

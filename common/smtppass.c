@@ -1470,7 +1470,7 @@ static void vmessage(spctx_t* ctx, int level, int err,
 
         if(err)
         {
-            /* TODO: strerror_r doesn't want to work for us
+            /* strerror_r doesn't want to work for us for some reason
             strerror_r(e, m + strlen(m), MAX_MSGLEN); */
 
             sp_lock();

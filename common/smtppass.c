@@ -275,6 +275,7 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
         exit(1);
     }
 
+    fcntl(sock, F_SETFD, fcntl(sock, F_GETFD, 0) | FD_CLOEXEC);
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true));
 
     /* Unlink the socket file if it exists */
@@ -1173,6 +1174,7 @@ int sp_write_data(spctx_t* ctx, const char* buf, int len)
             return -1;
         }
 
+        fcntl(tfd, F_SETFD, fcntl(tfd, F_GETFD, 0) | FD_CLOEXEC);
         sp_messagex(ctx, LOG_DEBUG, "created cache file: %s", ctx->cachename);
     }
 

@@ -108,7 +108,6 @@ spthread_t;
 #define ESMTP_CHUNK         "CHUNKING"
 #define ESMTP_BINARY        "BINARYMIME"
 #define ESMTP_CHECK         "CHECKPOINT"
-#define ESMTP_XFORWARD      "XFORWARD"
 #define ESMTP_XCLIENT       "XCLIENT"
 
 #define HELO_CMD            "HELO"
@@ -119,7 +118,6 @@ spthread_t;
 #define RSET_CMD            "RSET"
 #define STARTTLS_CMD        "STARTTLS"
 #define BDAT_CMD            "BDAT"
-#define XFORWARD_CMD        "XFORWARD"
 #define XCLIENT_CMD         "XCLIENT"
 
 #define DATA_END_SIG        "." CRLF
@@ -899,7 +897,7 @@ static int smtp_passthru(spctx_t* ctx)
             }
 
             /*
-             * We always support XFORWARD on a HELO type connection. We do this
+             * We always support XCLIENT on a HELO type connection. We do this
              * for security reasons, so that a client can't get around filtering
              * by backing up one on the protocol.
              */
@@ -931,15 +929,12 @@ static int smtp_passthru(spctx_t* ctx)
 
             /*
              * For security reasons we're not about to forward any XCLIENTs
-             * or XFORWARDs from our client through. This could lead to a
-             * client using our privileged IP address to change an audit
-             * trail or relay etc...
+             * from our client through. This could lead to a client using our
+             * privileged IP address to change an audit trail or relay etc...
              */
-            else if(is_first_word(C_LINE, XCLIENT_CMD, KL(XCLIENT_CMD)) ||
-                    is_first_word(C_LINE, XFORWARD_CMD, KL(XFORWARD_CMD)))
+            else if(is_first_word(C_LINE, XCLIENT_CMD, KL(XCLIENT_CMD)))
             {
-                trim_end(C_LINE);
-                sp_messagex(ctx, LOG_WARNING, "client attempted use of privileged feature: %s", C_LINE);
+                sp_messagex(ctx, LOG_WARNING, "client attempted use of privileged XCLIENT feature");
 
                 if(spio_write_data(ctx, &(ctx->client), SMTP_NOTAUTH) == -1)
                     RETURN(-1);
@@ -1028,7 +1023,7 @@ static int smtp_passthru(spctx_t* ctx)
                 {
                     /*
                      * On ESMTP connections we let the server tell us whether it
-                     * wants XFORWARDs or not. (In contrast to old SMTP above).
+                     * wants XCLIENTs or not. (In contrast to old SMTP above).
                      */
                     if(is_first_word(p, ESMTP_XCLIENT, KL(ESMTP_XCLIENT)))
                     {
@@ -1041,8 +1036,7 @@ static int smtp_passthru(spctx_t* ctx)
                        is_first_word(p, ESMTP_CHUNK, KL(ESMTP_CHUNK)) ||
                        is_first_word(p, ESMTP_BINARY, KL(ESMTP_BINARY)) ||
                        is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)) ||
-                       is_first_word(p, ESMTP_XCLIENT, KL(ESMTP_XCLIENT)) ||
-                       is_first_word(p, ESMTP_XFORWARD, KL(ESMTP_XFORWARD)))
+                       is_first_word(p, ESMTP_XCLIENT, KL(ESMTP_XCLIENT)))
                     {
                         sp_messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space((char*)p));
 

@@ -36,7 +36,6 @@
  *  Andreas Steinmetz <ast@domdv.de>
  */
 
-/* TODO: Remove unneeded headers */
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -119,6 +118,21 @@ spthread_t;
 #define OK_RSP              "250"
 #define START_RSP           "220"
 
+/* The set of delimiters that can be present between config and value */
+#define CFG_DELIMS      ": \t"
+
+#define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (SP_LINE_LENGTH - 2))
+
+/* -----------------------------------------------------------------------
+ *  CONFIGURATION OPTIONS
+ *
+ * - Be sure that your configuration option needs to go into this
+ *   file. More likely it'll go into clamsmtpd.c
+ * - When adding configuration options follow the instructions in
+ *   clamsmtpd.c, except add option to spstate_t (above) and parse in
+ *   sp_parse_option (below)
+ */
+
 #define CFG_MAXTHREADS      "MaxConnections"
 #define CFG_TIMEOUT         "TimeOut"
 #define CFG_OUTADDR         "OutAddress"
@@ -126,11 +140,6 @@ spthread_t;
 #define CFG_TRANSPARENT     "TransparentProxy"
 #define CFG_DIRECTORY       "TempDirectory"
 
-/* The set of delimiters that can be present between config and value */
-#define CFG_DELIMS      ": \t"
-
-
-#define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (SP_LINE_LENGTH - 2))
 
 /* -----------------------------------------------------------------------
  *  DEFAULT SETTINGS

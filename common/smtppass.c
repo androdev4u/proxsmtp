@@ -125,7 +125,7 @@ clamsmtp_thread_t;
 #define DEFAULT_CLAMAV  "/var/run/clamav/clamd"
 #define DEFAULT_MAXTHREADS  64
 #define DEFAULT_TIMEOUT	180
-#define DEFAULT_HEADER  "X-AV-Checked: ClamAV using ClamSMTP\r\n"
+#define DEFAULT_HEADER  "X-AV-Checked: ClamAV using ClamSMTP"
 
 /* -----------------------------------------------------------------------
  *  GLOBALS
@@ -1287,8 +1287,8 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
              */
             if(is_blank_line(ctx->line))
             {
-                if(write_data_raw(ctx, &(ctx->server), (char*)g_header,
-                                  strlen(g_header)) == -1)
+                if(write_data_raw(ctx, &(ctx->server), (char*)g_header, strlen(g_header)) == -1 ||
+                   write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
 
                 header = 1;

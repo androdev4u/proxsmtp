@@ -77,16 +77,19 @@ clamsmtp_thread_t;
 
 #define KL(s)               ((sizeof(s) - 1) / sizeof(char))
 
-#define SMTP_TOOLONG        "500 Line too long\r\n"
-#define SMTP_STARTBUSY      "554 Server Busy\r\n"
-#define SMTP_STARTFAILED    "554 Local Error\r\n"
-#define SMTP_DATAVIRUS      "550 Virus Detected; Content Rejected\r\n"
-#define SMTP_DATAINTERMED   "354 Start mail input; end with <CRLF>.<CRLF>\r\n"
-#define SMTP_FAILED         "451 Local Error\r\n"
-#define SMTP_NOTSUPP        "502 Command not implemented\r\n"
-#define SMTP_DATAVIRUSOK    "250 Virus Detected; Discarded Email\r\n"
+#define CRLF                "\r\n"
 
-#define SMTP_DATA           "DATA\r\n"
+#define SMTP_TOOLONG        "500 Line too long" CRLF
+#define SMTP_STARTBUSY      "554 Server Busy" CRLF
+#define SMTP_STARTFAILED    "554 Local Error" CRLF
+#define SMTP_DATAVIRUS      "550 Virus Detected; Content Rejected" CRLF
+#define SMTP_DATAINTERMED   "354 Start mail input; end with <CRLF>.<CRLF>" CRLF
+#define SMTP_FAILED         "451 Local Error" CRLF
+#define SMTP_NOTSUPP        "502 Command not implemented" CRLF
+#define SMTP_DATAVIRUSOK    "250 Virus Detected; Discarded Email" CRLF
+#define SMTP_OK             "250 Ok" CRLF
+
+#define SMTP_DATA           "DATA" CRLF
 #define SMTP_HELO           "HELO "
 #define SMTP_DELIMS         "\r\n\t :"
 
@@ -97,9 +100,10 @@ clamsmtp_thread_t;
 #define DATA_CMD            "DATA"
 #define RSET_CMD            "RSET"
 
-#define DATA_END_SIG        "\r\n.\r\n"
+#define DATA_END_SIG        CRLF "." CRLF
 
 #define DATA_RSP            "354"
+#define OK_RSP              "250"
 
 #define CLAM_OK             "OK"
 #define CLAM_ERROR          "ERROR"
@@ -595,6 +599,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
     char logline[LINE_LENGTH];
     int processing = 0;
     int r, ret = 0;
+    int helo = 0;
 	fd_set mask;
 
     ASSERT(ctx->clam != -1 && ctx->server != -1);
@@ -660,6 +665,8 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
                 /* Reset log line */
                 logline[0] = 0;
+
+                /* Command handled */
                 continue;
             }
 
@@ -668,13 +675,14 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
              * and other nuances aren't implemented here. In order
              * to keep things reliable we just disable it all.
              */
-            if(is_first_word(ctx->line, EHLO_CMD, KL(EHLO_CMD)))
+            else if(is_first_word(ctx->line, EHLO_CMD, KL(EHLO_CMD)))
             {
                 messagex(ctx, LOG_DEBUG, "ESMTP not implemented");
 
                 if(write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
                     RETURN(-1);
 
+                /* Command handled */
                 continue;
             }
 
@@ -685,18 +693,25 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
              */
             else if(is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
             {
-                strlcat(ctx->line, SMTP_HELO, LINE_LENGTH);
+                messagex(ctx, LOG_DEBUG, "intercepting HELO");
+
+                strlcpy(ctx->line, SMTP_HELO, LINE_LENGTH);
 
                 r = KL(SMTP_HELO);
 
                 if(gethostname(ctx->line + r, LINE_LENGTH - r) == -1)
                     strlcat(ctx->line, "clamsmtp", LINE_LENGTH);
 
+                strlcat(ctx->line, CRLF, LINE_LENGTH);
                 ctx->line[LINE_LENGTH - 1] = 0;
 
                 if(write_data(ctx, &(ctx->server), ctx->line) == -1)
                     RETURN(-1);
 
+                /* The 250 response from the server also needs changing */
+                helo = 1;
+
+                /* Command handled */
                 continue;
             }
 
@@ -730,6 +745,25 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
             if(LINE_TOO_LONG(ctx))
                 messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
+
+            /*
+             * After we've seen a HELO we need to edit the response that
+             * gets sent back to the client to prevent the server from
+             * thinking we're in a wierd loop.
+             */
+            if(helo)
+            {
+                helo = 0;
+
+                if(is_first_word(ctx->line, OK_RSP, KL(OK_RSP)))
+                {
+                    if(write_data(ctx, &(ctx->client), SMTP_OK) == -1)
+                        RETURN(-1);
+
+                    /* Command handled */
+                    continue;
+                }
+            }
 
             if(write_data(ctx, &(ctx->client), ctx->line) == -1)
                 RETURN(-1);

@@ -464,6 +464,13 @@ static void connection_loop(int sock)
                     pthread_join(threads[i].tid, NULL);
                     threads[i].tid = 0;
                 }
+#ifdef _DEBUG
+                else
+                {
+                    /* For debugging connection problems: */
+                    messagex(NULL, LOG_DEBUG, "active connection thread: %x", (int)threads[i].tid);
+                }
+#endif
             }
 
             /* Start a new thread if neccessary */
@@ -494,6 +501,7 @@ static void connection_loop(int sock)
             /* TODO: Respond with a too many connections message */
             write_data(NULL, &fd, SMTP_STARTBUSY);
             shutdown(fd, SHUT_RDWR);
+            close(fd);
         }
     }
 
@@ -506,7 +514,15 @@ static void connection_loop(int sock)
         if(threads[i].tid != 0)
         {
             if(threads[i].fd != -1)
-                shutdown(threads[i].fd, SHUT_RDWR);
+            {
+                plock();
+                    fd = threads[i].fd;
+                    threads[i].fd = -1;
+                punlock();
+
+                shutdown(fd, SHUT_RDWR);
+                close(fd);
+            }
 
             pthread_join(threads[i].tid, NULL);
         }
@@ -546,6 +562,7 @@ static void* thread_main(void* arg)
     punlock();
 
     ASSERT(ctx.client != -1);
+    messagex(&ctx, LOG_DEBUG, "processing %d on thread %x", ctx.client, (int)pthread_self());
 
     memset(&addr, 0, sizeof(addr));
     SANY_LEN(addr) = sizeof(addr);
@@ -601,12 +618,14 @@ cleanup:
     if(ctx.client != -1)
     {
         shutdown(ctx.client, SHUT_RDWR);
+        close(ctx.client);
         messagex(&ctx, LOG_NOTICE, "closed client connection");
     }
 
     if(ctx.server != -1)
     {
         shutdown(ctx.server, SHUT_RDWR);
+        close(ctx.server);
         messagex(&ctx, LOG_DEBUG, "closed server connection");
     }
 
@@ -998,7 +1017,7 @@ cleanup:
     {
         if(ctx->clam != -1)
         {
-            shutdown(ctx->clam, SHUT_RDWR);
+            close(ctx->clam);
             ctx->clam = -1;
         }
     }
@@ -1015,8 +1034,10 @@ static int disconnect_clam(clamsmtp_context_t* ctx)
         read_junk(ctx, ctx->clam);
 
     shutdown(ctx->clam, SHUT_RDWR);
-    messagex(ctx, LOG_DEBUG, "disconnected from clamd");
+    close(ctx->clam);
     ctx->clam = -1;
+
+    messagex(ctx, LOG_DEBUG, "disconnected from clamd");
     return 0;
 }
 
@@ -1063,7 +1084,7 @@ static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* l
     if(is_last_word(ctx->line, CLAM_ERROR, KL(CLAM_ERROR)))
     {
         messagex(ctx, LOG_ERR, "clamav error: %s", ctx->line);
-        add_to_logline(logline, "status=ERROR");
+        add_to_logline(logline, "status=", "CLAMAV-ERROR");
         return -1;
     }
 
@@ -1310,7 +1331,7 @@ cleanup:
     if(ret < 0)
     {
         if(sock != -1)
-            shutdown(sock, SHUT_RDWR);
+            close(sock);
 
         message(ctx, LOG_ERR, "couldn't connect to: %s", addrname);
         RETURN(-1);
@@ -1421,6 +1442,7 @@ static int read_line(clamsmtp_context_t* ctx, int* fd, int trim)
              * no good trying to read from again later.
              */
             shutdown(*fd, SHUT_RDWR);
+            close(*fd);
             *fd = -1;
 
             if(errno == EAGAIN)
@@ -1481,6 +1503,7 @@ static int write_data_raw(clamsmtp_context_t* ctx, int* fd, unsigned char* buf, 
              * no good trying to write to it again later.
              */
             shutdown(*fd, SHUT_RDWR);
+            close(*fd);
             *fd = -1;
 
             if(errno == EAGAIN)

@@ -229,7 +229,7 @@ unsigned int spio_select(spctx_t* ctx, ...)
 
 int read_raw(spctx_t* ctx, spio_t* io, int opts)
 {
-    int len, x;
+    int len, x, count;
     char* at;
     char* p;
 
@@ -239,17 +239,19 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
      * _nx: Extra data read on last read.
      * _ln: Length of that extra data.
      *
-     * _nx should never be equal to line when entering this
-     * function. And _ln should always be less than a full
-     * buffer.
+     * _nx should never be equal to line when entering this function.
+     * And _ln should always be less than a full buffer.
      */
+
+    count = 0;
+    io->line[0] = 0;
 
     /* Remaining data in the buffer  */
     if(io->_nx && io->_ln > 0)
     {
         ASSERT(!io->_nx || io->_nx > io->line);
         ASSERT(io->_ln < SP_LINE_LENGTH);
-        ASSERT(io->_nx + io->_ln < io->line + SP_LINE_LENGTH);
+        ASSERT(io->_nx + io->_ln <= io->line + SP_LINE_LENGTH);
 
         /* Check for a return in the current buffer */
         if((p = (char*)memchr(io->_nx, '\n', io->_ln)) != NULL)
@@ -267,12 +269,13 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
             io->_nx += x;
 
             /* A double check on the return value */
-            ASSERT(strlen(io->line) == x);
-            return x;
+            count += x;
+            return count;
         }
 
         /* Otherwise move all old data to front */
         memmove(io->line, io->_nx, io->_ln);
+        count += io->_ln;
 
         /* We always leave space for a null terminator */
         len = (SP_LINE_LENGTH - io->_ln) - 1;
@@ -329,9 +332,7 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
             io->_nx = NULL;
             io->_ln = 0;
 
-            /* A double check on the return value */
-            ASSERT(strlen(io->line) == at - io->line);
-            return at - io->line;
+            return count;
         }
 
         /* Check for a new line */
@@ -339,20 +340,24 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
         if(p != NULL)
         {
             p++;
-            len = x - (p - at);
+            count += (p - at);
 
             /* Insert the null terminator */
-            memmove(p, p + 1, len);
+            len = x - (p - at);
+            memmove(p + 1, p, len);
             *p = 0;
 
             /* Do maintenence for remaining data */
             io->_nx = p + 1;
             io->_ln = len;
 
-            /* A double check on the return value */
-            ASSERT(strlen(io->line) == p - io->line);
-            return p - io->line;
+            return count;
         }
+
+        /* Move the buffer pointer along */
+        at += x;
+        len -= x;
+        count += x;
 
         if(len <= 0)
         {
@@ -381,8 +386,7 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
             io->line[SP_LINE_LENGTH] = 0;
 
             /* A double check on the return value */
-            ASSERT(strlen(io->line) == p - io->line);
-            return SP_LINE_LENGTH;
+            return count;
         }
     }
 }

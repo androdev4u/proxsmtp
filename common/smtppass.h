@@ -218,7 +218,7 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status);
  * if you're going to fork another process. Be sure to exec
  * soon after to prevent the strings from going out of scope.
  */
-void sp_setup_env(spctx_t* ctx, int file);
+void sp_setup_forked(spctx_t* ctx, int file);
 
 /*
  * Log a message. levels are syslog levels. Syntax is just

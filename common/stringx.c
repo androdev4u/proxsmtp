@@ -90,7 +90,7 @@ static void vmessage(clamsmtp_context_t* ctx, int level, int err,
         if(err)
         {
             /* TODO: strerror_r doesn't want to work for us
-            strerror(e, m + strlen(m), MAX_MSGLEN); */
+            strerror_r(e, m + strlen(m), MAX_MSGLEN); */
             strncat(m, strerror(e), len);
         }
 

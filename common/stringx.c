@@ -244,12 +244,12 @@ void plock()
 #endif
 
 #ifdef _DEBUG
-    r = pthread_mutex_trylock(&(g_state->mutex));
+    r = pthread_mutex_trylock((pthread_mutex_t*)&(g_state->mutex));
     if(r == EBUSY)
     {
         wait = 1;
         message(NULL, LOG_DEBUG, "thread will block: %d", pthread_self());
-        r = pthread_mutex_lock(&(g_state->mutex));
+        r = pthread_mutex_lock((pthread_mutex_t*)&(g_state->mutex));
     }
 
 #else
@@ -273,7 +273,7 @@ void plock()
 
 void punlock()
 {
-    int r = pthread_mutex_unlock(&(g_state->mutex));
+    int r = pthread_mutex_unlock((pthread_mutex_t*)&(g_state->mutex));
     if(r != 0)
     {
         errno = r;

@@ -39,8 +39,17 @@
 #ifndef __CLAMSMTPD_H__
 #define __CLAMSMTPD_H__
 
-/* A generous maximum line length. */
-#define LINE_LENGTH 2000
+/*
+ * A generous maximum line length. It needs to be longer than
+ * a full path on this system can be, because we pass the file
+ * name to clamd.
+ */
+
+#if 2000 > MAXPATHLEN
+    #define LINE_LENGTH 2000
+#else
+    #define LINE_LENGTH (MAXPATHLEN + 128)
+#endif
 
 typedef struct clamsmtp_context
 {

@@ -96,6 +96,7 @@ spthread_t;
 #define SMTP_BANNER         "220 smtp.passthru" CRLF
 #define SMTP_HELO_RSP       "250 smtp.passthru" CRLF
 #define SMTP_EHLO_RSP       "250-smtp.passthru" CRLF
+#define SMTP_FEAT_RSP       "250 XFILTERED" CRLF
 #define SMTP_DELIMS         "\r\n\t :"
 #define SMTP_MULTI_DELIMS   " -"
 
@@ -177,7 +178,7 @@ static int connect_out(spctx_t* ctx);
 static int read_server_response(spctx_t* ctx);
 static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
-static const char* get_successful_rsp(const char* line);
+static const char* get_successful_rsp(const char* line, int* cont);
 
 /* Used externally in some cases */
 int sp_parse_option(const char* name, const char* option);
@@ -783,7 +784,7 @@ static int smtp_passthru(spctx_t* ctx)
 {
     char* t;
     const char* p;
-    int r, ret = 0;
+    int r, cont, ret = 0;
     unsigned int mask;
     int neterror = 0;
 
@@ -928,25 +929,24 @@ static int smtp_passthru(spctx_t* ctx)
                 }
             }
 
-            /*
-             * Certain mail servers (Postfix 1.x in particular) do a loop check
-             * on the 250 response after a EHLO or HELO. This is where we
-             * filter that to prevent loopback errors.
-             */
-            if(filter_host)
+            if((p = get_successful_rsp(S_LINE, &cont)) != NULL)
             {
-                /* Can have multi-line responses, and we want to be
-                 * sure to only replace the first one. */
-                filter_host = 0;
-
-                /* Check for a simple '250 xxxx' */
-                if(is_first_word(S_LINE, OK_RSP, KL(OK_RSP)))
+                /*
+                 * Certain mail servers (Postfix 1.x in particular) do a loop check
+                 * on the 250 response after a EHLO or HELO. This is where we
+                 * filter that to prevent loopback errors.
+                 */
+                if(filter_host)
                 {
+                    /* Can have multi-line responses, and we want to be
+                     * sure to only replace the first one. */
+                    filter_host = 0;
+
                     sp_messagex(ctx, LOG_DEBUG, "intercepting host response");
 
-                    if(spio_write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
+                    if(spio_write_data(ctx, &(ctx->client),
+                           cont ? SMTP_EHLO_RSP : SMTP_HELO_RSP) == -1)
                         RETURN(-1);
-
 
                     /* A new email so cleanup */
                     cleanup_context(ctx);
@@ -954,23 +954,6 @@ static int smtp_passthru(spctx_t* ctx)
                     continue;
                 }
 
-                /* Check for the continued response '250-xxxx' */
-                if(check_first_word(S_LINE, OK_RSP, KL(OK_RSP), SMTP_MULTI_DELIMS) > 0)
-                {
-                    sp_messagex(ctx, LOG_DEBUG, "intercepting host response");
-
-                    if(spio_write_data(ctx, &(ctx->client), SMTP_EHLO_RSP) == -1)
-                        RETURN(-1);
-
-                    /* New email so cleanup  */
-                    cleanup_context(ctx);
-
-                    continue;
-                }
-            }
-
-            if((p = get_successful_rsp(S_LINE)) != NULL)
-            {
                 /*
                  * Filter out any EHLO responses that we can't or don't want
                  * to support. For example pipelining or TLS.
@@ -984,6 +967,17 @@ static int smtp_passthru(spctx_t* ctx)
                        is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)))
                     {
                         sp_messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space((char*)p));
+
+                        /*
+                         * If this is the last line in the EHLO response we need
+                         * to replace it with something else
+                         */
+                        if(!cont)
+                        {
+                            if(spio_write_data(ctx, &(ctx->client), SMTP_FEAT_RSP) == -1)
+                                RETURN(-1);
+                        }
+
                         continue;
                     }
                 }
@@ -1069,7 +1063,7 @@ static char* parse_address(char* line)
     return trim_end(line);
 }
 
-static const char* get_successful_rsp(const char* line)
+static const char* get_successful_rsp(const char* line, int* cont)
 {
     /*
      * We check for both '250 xxx' type replies
@@ -1080,7 +1074,11 @@ static const char* get_successful_rsp(const char* line)
 
     if(line[0] == '2' && isdigit(line[1]) && isdigit(line[2]) &&
        (line[3] == ' ' || line[3] == '-'))
+    {
+        if(cont)
+            *cont = (line[3] == '-');
         return line + 4;
+    }
 
     return NULL;
 }

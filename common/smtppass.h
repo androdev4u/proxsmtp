@@ -108,6 +108,10 @@ unsigned int  spio_select(struct spctx* ctx, ...);
  * SMTP PASS THROUGH FUNCTIONALITY
  */
 
+/* Log lines have to be under roughly 900 chars otherwise
+ * they get truncated by syslog. */
+#define SP_LOG_LINE_LEN  768
+
 typedef struct spctx
 {
     unsigned int id;                /* Identifier for the connection */
@@ -117,15 +121,12 @@ typedef struct spctx
 
     FILE* cachefile;                /* The file handle for the cached file */
     char cachename[MAXPATHLEN];     /* The name of the file that we cache into */
-    char logline[SP_LINE_LENGTH];   /* Log line */
+    char logline[SP_LOG_LINE_LEN];  /* Log line */
 
     char* sender;             /* The email of the sender */
     char* recipients;         /* The email of the recipients */
 
     int _crlf;                      /* Private data */
-    char _l1[SP_LINE_LENGTH];
-    char _l2[SP_LINE_LENGTH];
-    time_t _tm;
 }
 spctx_t;
 

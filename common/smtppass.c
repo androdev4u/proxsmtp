@@ -1094,16 +1094,16 @@ void sp_add_log(spctx_t* ctx, char* prefix, char* line)
     int l = strlen(t);
     int x;
 
-    ASSERT(l <= SP_LINE_LENGTH);
+    ASSERT(l <= SP_LOG_LINE_LEN);
 
     /* Add up necessary lengths */
     x = 2 + strlen(prefix) + strlen(line) + 1;
 
-    if(l + x >= SP_LINE_LENGTH)
-        l = SP_LINE_LENGTH - x;
+    if(l + x >= SP_LOG_LINE_LEN)
+        l = SP_LOG_LINE_LEN - x;
 
     t += l;
-    l = SP_LINE_LENGTH - l;
+    l = SP_LOG_LINE_LEN - l;
 
     *t = 0;
 

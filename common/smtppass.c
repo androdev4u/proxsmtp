@@ -43,7 +43,6 @@
 #include <sys/stat.h>
 
 #include <ctype.h>
-#include <paths.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -51,7 +50,6 @@
 #include <signal.h>
 #include <errno.h>
 #include <err.h>
-#include <pthread.h>
 
 #include "usuals.h"
 #include "compat.h"
@@ -73,8 +71,6 @@ clamsmtp_thread_t;
 /* -----------------------------------------------------------------------
  *  STRINGS
  */
-
-#define KL(s)               ((sizeof(s) - 1) / sizeof(char))
 
 #define CRLF                "\r\n"
 
@@ -126,44 +122,14 @@ clamsmtp_thread_t;
 #define CLAM_CONNECT        "SESSION\nPING\n"
 #define CLAM_DISCONNECT     "END\n"
 
-/* -----------------------------------------------------------------------
- *  DEFAULT SETTINGS
- */
-
-#define DEFAULT_SOCKET  "10025"
-#define DEFAULT_PORT    10025
-#define DEFAULT_CLAMAV  "/var/run/clamav/clamd"
-#define DEFAULT_MAXTHREADS  64
-#define DEFAULT_TIMEOUT	180
-#define DEFAULT_HEADER  "X-AV-Checked: ClamAV using ClamSMTP"
+#define DEFAULT_CONFIG      CONF_PREFIX "/httpauthd.conf"
 
 /* -----------------------------------------------------------------------
  *  GLOBALS
  */
 
-int g_daemonized = 0;                     /* Currently running as a daemon */
-int g_debuglevel = LOG_ERR;               /* what gets logged to console */
-int g_maxthreads = DEFAULT_MAXTHREADS;    /* The maximum number of threads */
-struct timeval g_timeout = { DEFAULT_TIMEOUT, 0 };
-
-struct sockaddr_any g_outaddr;              /* The outgoing address */
-const char* g_outname = NULL;
-struct sockaddr_any g_clamaddr;             /* Address for connecting to clamd */
-const char* g_clamname = DEFAULT_CLAMAV;
-
-char* g_header = DEFAULT_HEADER;            /* The header to add to email */
-const char* g_directory = _PATH_TMP;        /* The directory for temp files */
+clstate_t g_state;                          /* The state and configuration of the daemon */
 unsigned int g_unique_id = 0x00100000;      /* For connection ids */
-int g_bounce = 0;                           /* Send back a reject line */
-int g_quarantine = 0;                       /* Leave virus files in temp dir */
-int g_debugfiles = 0;                       /* Leave all files in temp dir */
-
-/* For main loop and signal handlers */
-int g_quit = 0;
-
-/* The main mutex and condition variables */
-pthread_mutex_t g_mutex;
-pthread_mutexattr_t g_mutexattr;
 
 
 /* -----------------------------------------------------------------------
@@ -172,7 +138,7 @@ pthread_mutexattr_t g_mutexattr;
 
 static void usage();
 static void on_quit(int signal);
-static void pid_file(const char* pid, int write);
+static void pid_file(int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
 static int smtp_passthru(clamsmtp_context_t* ctx);
@@ -195,86 +161,90 @@ static void read_junk(clamsmtp_context_t* ctx, int fd);
 
 int main(int argc, char* argv[])
 {
-    const char* listensock = DEFAULT_SOCKET;
-    struct sockaddr_any addr;
-    char* pidfile = NULL;
-    int daemonize = 1;
+    const char* configfile = DEFAULT_CONFIG;
+    int warnargs = 0;
     int sock;
     int true = 1;
     int ch = 0;
     char* t;
 
+    clstate_init(&g_state);
+
     /* Parse the arguments nicely */
-    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:qt:vX")) != -1)
+    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:qt:v")) != -1)
     {
         switch(ch)
         {
         /* Actively reject messages */
         case 'b':
-            g_bounce = 1;
+            g_state.bounce = 1;
+            warnargs = 1;
             break;
 
         /* Change the CLAM socket */
         case 'c':
-            g_clamname = optarg;
+            g_state.clamname = optarg;
+            warnargs = 1;
             break;
 
 		/*  Don't daemonize  */
         case 'd':
-            daemonize = 0;
-            g_debuglevel = strtol(optarg, &t, 10);
-            if(*t || g_debuglevel > 4)
+            g_state.debug_level = strtol(optarg, &t, 10);
+            if(*t) /* parse error */
                 errx(1, "invalid debug log level");
-            g_debuglevel += LOG_ERR;
+            g_state.debug_level += LOG_ERR;
             break;
 
         /* The directory for the files */
         case 'D':
-            g_directory = optarg;
+            g_state.directory = optarg;
+            warnargs = 1;
+            break;
+
+        /* The configuration file */
+        case 'f':
+            configfile = optarg;
             break;
 
         /* The header to add */
         case 'h':
             if(strlen(optarg) == 0)
-                g_header = NULL;
+                g_state.header = NULL;
             else
-            {
-                g_header = optarg;
-
-                /* Trim off any ending newline chars */
-                t = g_header + strlen(g_header);
-                while(t > g_header && (*(t - 1) == '\r' || *(t - 1) == '\n'))
-                    *(--t) = 0;
-            }
+                g_state.header = optarg;
+            warnargs = 1;
             break;
 
         /* Change our listening port */
         case 'l':
-            listensock = optarg;
+            g_state.listenname = optarg;
+            warnargs = 1;
             break;
 
         /* The maximum number of threads */
         case 'm':
-            g_maxthreads = strtol(optarg, &t, 10);
-            if(*t || g_maxthreads <= 1 || g_maxthreads >= 1024)
-                  errx(1, "invalid max threads (must be between 1 and 1024");
+            g_state.max_threads = strtol(optarg, &t, 10);
+            if(*t) /* parse error */
+                errx(1, "invalid max threads");
+            warnargs = 1;
             break;
 
         /* Write out a pid file */
         case 'p':
-            pidfile = optarg;
+            g_state.pidfile = optarg;
             break;
 
         /* The timeout */
 		case 't':
-			g_timeout.tv_sec = strtol(optarg, &t, 10);
-			if(*t || g_timeout.tv_sec <= 0)
-				errx(1, "invalid timeout: %s", optarg);
+			g_state.timeout.tv_sec = strtol(optarg, &t, 10);
+			if(*t) /* parse error */
+				errx(1, "invalid timeout");
+            warnargs = 1;
 			break;
 
         /* Leave virus files in directory */
         case 'q':
-            g_quarantine = 1;
+            g_state.quarantine = 1;
             break;
 
         /* Print version number */
@@ -285,7 +255,8 @@ int main(int argc, char* argv[])
 
         /* Leave all files in the tmp directory */
         case 'X':
-            g_debugfiles = 1;
+            g_state.debug_files = 1;
+            warnargs = 1;
             break;
 
         /* Usage information */
@@ -296,25 +267,33 @@ int main(int argc, char* argv[])
 		}
     }
 
+    if(warnargs);
+        warnx("please use configuration file instead of command-line flags: %s", configfile);
+
 	argc -= optind;
 	argv += optind;
 
-    if(argc != 1)
+    if(argc > 1)
         usage();
+    if(argc == 1)
+        g_state.outname = argv[0];
 
-    g_outname = argv[0];
+    /* Now parse the configuration file */
+    if(clstate_parse_config(&g_state, configfile) == -1)
+    {
+        /* Only error when it was forced */
+        if(configfile != DEFAULT_CONFIG)
+            err(1, "couldn't open config file: %s", configfile);
+        else
+            warnx("default configuration file not found: %s", configfile);
+    }
+
+    clstate_validate(&g_state);
 
     messagex(NULL, LOG_DEBUG, "starting up...");
 
-    /* Parse all the addresses */
-    if(sock_any_pton(listensock, &addr, SANY_OPT_DEFANY | SANY_OPT_DEFPORT(DEFAULT_PORT)) == -1)
-        errx(1, "invalid listen socket name or ip: %s", listensock);
-    if(sock_any_pton(g_outname, &g_outaddr, SANY_OPT_DEFPORT(25)) == -1)
-        errx(1, "invalid connect socket name or ip: %s", g_outname);
-    if(sock_any_pton(g_clamname, &g_clamaddr, SANY_OPT_DEFLOCAL) == -1)
-        errx(1, "invalid clam socket name: %s", g_clamname);
-
-    if(daemonize)
+    /* When set to this we daemonize */
+    if(g_state.debug_level == -1)
     {
         /* Fork a daemon nicely here */
         if(daemon(0, 0) == -1)
@@ -324,51 +303,61 @@ int main(int argc, char* argv[])
         }
 
         messagex(NULL, LOG_DEBUG, "running as a daemon");
-        g_daemonized = 1;
+        g_state.daemonized = 1;
 
         /* Open the system log */
         openlog("clamsmtpd", 0, LOG_MAIL);
     }
 
     /* Create the socket */
-    sock = socket(SANY_TYPE(addr), SOCK_STREAM, 0);
+    sock = socket(SANY_TYPE(g_state.listenaddr), SOCK_STREAM, 0);
     if(sock < 0)
-      err(1, "couldn't open socket");
+    {
+        message(NULL, LOG_CRIT, "couldn't open socket");
+        exit(1);
+    }
 
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true));
 
     /* Unlink the socket file if it exists */
-    if(SANY_TYPE(addr) == AF_UNIX)
-        unlink(listensock);
+    if(SANY_TYPE(g_state.listenaddr) == AF_UNIX)
+        unlink(g_state.listenname);
 
-    if(bind(sock, &SANY_ADDR(addr), SANY_LEN(addr)) != 0)
-      err(1, "couldn't bind to address: %s", listensock);
+    if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
+    {
+        message(NULL, LOG_CRIT, "couldn't bind to address: %s", g_state.listenname);
+        exit(1);
+    }
 
     /* Let 5 connections queue up */
     if(listen(sock, 5) != 0)
-      err(1, "couldn't listen on socket");
+    {
+        message(NULL, LOG_CRIT, "couldn't listen on socket");
+        exit(1);
+    }
 
-    messagex(NULL, LOG_DEBUG, "created socket: %s", listensock);
+    messagex(NULL, LOG_DEBUG, "created socket: %s", g_state.listenname);
 
     /* Handle some signals */
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGHUP, SIG_IGN);
+    signal(SIGHUP,  SIG_IGN);
     signal(SIGINT,  on_quit);
     signal(SIGTERM, on_quit);
 
     siginterrupt(SIGINT, 1);
     siginterrupt(SIGTERM, 1);
 
-    if(pidfile)
-        pid_file(pidfile, 1);
+    if(g_state.pidfile)
+        pid_file(1);
 
     messagex(NULL, LOG_DEBUG, "accepting connections");
 
     connection_loop(sock);
 
-    if(pidfile)
-        pid_file(pidfile, 0);
+    if(g_state.pidfile)
+        pid_file(0);
 
+    clstate_cleanup(&g_state);
     messagex(NULL, LOG_DEBUG, "stopped");
 
     return 0;
@@ -376,45 +365,43 @@ int main(int argc, char* argv[])
 
 static void on_quit(int signal)
 {
-    g_quit = 1;
-
+    g_state.quit = 1;
     /* fprintf(stderr, "clamsmtpd: got signal to quit\n"); */
 }
 
 static void usage()
 {
-    fprintf(stderr, "usage: clamsmtpd [-bq] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
-            "[-l listenaddr] [-m maxconn] [-p pidfile] [-t timeout] serveraddr\n");
+    fprintf(stderr, "usage: clamsmtpd [-d debuglevel] [-f configfile] \n");
     fprintf(stderr, "       clamsmtpd -v\n");
     exit(2);
 }
 
-static void pid_file(const char* pidfile, int write)
+static void pid_file(int write)
 {
     if(write)
     {
-        FILE* f = fopen(pidfile, "w");
+        FILE* f = fopen(g_state.pidfile, "w");
         if(f == NULL)
         {
-            message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
+            message(NULL, LOG_ERR, "couldn't open pid file: %s", g_state.pidfile);
         }
         else
         {
             fprintf(f, "%d\n", (int)getpid());
 
             if(ferror(f))
-                message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
+                message(NULL, LOG_ERR, "couldn't write to pid file: %s", g_state.pidfile);
 
             fclose(f);
         }
 
-        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
+        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", g_state.pidfile);
     }
 
     else
     {
-        unlink(pidfile);
-        messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
+        unlink(g_state.pidfile);
+        messagex(NULL, LOG_DEBUG, "removed pid file: %s", g_state.pidfile);
     }
 }
 
@@ -429,18 +416,12 @@ static void connection_loop(int sock)
     int fd, i, x, r;
 
     /* Create the thread buffers */
-    threads = (clamsmtp_thread_t*)calloc(g_maxthreads, sizeof(clamsmtp_thread_t));
+    threads = (clamsmtp_thread_t*)calloc(g_state.max_threads, sizeof(clamsmtp_thread_t));
     if(!threads)
         errx(1, "out of memory");
 
-    /* Create the main mutex and condition variable */
-    if(pthread_mutexattr_init(&g_mutexattr) != 0 ||
-       pthread_mutexattr_settype(&g_mutexattr, MUTEX_TYPE) ||
-       pthread_mutex_init(&g_mutex, &g_mutexattr) != 0)
-        errx(1, "threading problem. can't create mutex or condition var");
-
     /* Now loop and accept the connections */
-    while(!g_quit)
+    while(!g_state.quit)
     {
         fd = accept(sock, NULL, NULL);
         if(fd == -1)
@@ -457,23 +438,23 @@ static void connection_loop(int sock)
 
             default:
                 message(NULL, LOG_ERR, "couldn't accept a connection");
-                g_quit = 1;
+                g_state.quit = 1;
                 break;
             };
 
-            if(g_quit)
+            if(g_state.quit)
                 break;
 
             continue;
         }
 
         /* Set timeouts on client */
-        if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &g_timeout, sizeof(g_timeout)) < 0 ||
-           setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &g_timeout, sizeof(g_timeout)) < 0)
+        if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &g_state.timeout, sizeof(g_state.timeout)) < 0 ||
+           setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &g_state.timeout, sizeof(g_state.timeout)) < 0)
             message(NULL, LOG_WARNING, "couldn't set timeouts on incoming connection");
 
         /* Look for thread and also clean up others */
-        for(i = 0; i < g_maxthreads; i++)
+        for(i = 0; i < g_state.max_threads; i++)
         {
             /* Find a thread to run or clean up old threads */
             if(threads[i].tid != 0)
@@ -507,7 +488,7 @@ static void connection_loop(int sock)
                 {
                     errno = r;
                     message(NULL, LOG_ERR, "couldn't create thread");
-                    g_quit = 1;
+                    g_state.quit = 1;
                     break;
                 }
 
@@ -520,7 +501,7 @@ static void connection_loop(int sock)
         /* Check to make sure we have a thread */
         if(fd != -1)
         {
-            messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_maxthreads);
+            messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_state.max_threads);
 
             write(fd, SMTP_STARTBUSY, KL(SMTP_STARTBUSY));
             shutdown(fd, SHUT_RDWR);
@@ -532,7 +513,7 @@ static void connection_loop(int sock)
     messagex(NULL, LOG_DEBUG, "waiting for threads to quit");
 
     /* Quit all threads here */
-    for(i = 0; i < g_maxthreads; i++)
+    for(i = 0; i < g_state.max_threads; i++)
     {
         /* Clean up quit threads */
         if(threads[i].tid != 0)
@@ -551,10 +532,6 @@ static void connection_loop(int sock)
             pthread_join(threads[i].tid, NULL);
         }
     }
-
-    /* Close the mutex */
-    pthread_mutex_destroy(&g_mutex);
-    pthread_mutexattr_destroy(&g_mutexattr);
 }
 
 static void* thread_main(void* arg)
@@ -616,15 +593,15 @@ static void* thread_main(void* arg)
 
 
     /* Create the server connection address */
-    outaddr = &g_outaddr;
-    outname = g_outname;
+    outaddr = &(g_state.outaddr);
+    outname = g_state.outname;
 
     if(SANY_TYPE(*outaddr) == AF_INET &&
        outaddr->s.in.sin_addr.s_addr == 0)
     {
         /* Use the incoming IP as the default */
         in_addr_t in = addr.s.in.sin_addr.s_addr;
-        memcpy(&addr, &g_outaddr, sizeof(addr));
+        memcpy(&addr, &(g_state.outaddr), sizeof(addr));
         addr.s.in.sin_addr.s_addr = in;
 
         outaddr = &addr;
@@ -954,7 +931,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     int havefile = 0;
     int r, ret = 0;
 
-    strlcpy(buf, g_directory, MAXPATHLEN);
+    strlcpy(buf, g_state.directory, MAXPATHLEN);
     strlcat(buf, "/clamsmtpd.XXXXXX", MAXPATHLEN);
 
     /* transfer_to_file deletes the temp file on failure */
@@ -993,7 +970,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
      */
     case 1:
         if(clio_write_data(ctx, &(ctx->client),
-                           g_bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
+                           g_state.bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
             RETURN(-1);
 
         /* Any special post operation actions on the virus */
@@ -1006,7 +983,7 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
     };
 
 cleanup:
-    if(havefile && !g_debugfiles)
+    if(havefile && !g_state.debug_files)
     {
         messagex(ctx, LOG_DEBUG, "deleting temporary file: %s", buf);
         unlink(buf);
@@ -1089,7 +1066,7 @@ static int connect_clam(clamsmtp_context_t* ctx)
     ASSERT(ctx);
     ASSERT(!clio_valid(&(ctx->clam)));
 
-    if(clio_connect(ctx, &(ctx->clam), &g_clamaddr, g_clamname) == -1)
+    if(clio_connect(ctx, &(ctx->clam), &g_state.clamaddr, g_state.clamname) == -1)
        RETURN(-1);
 
     read_junk(ctx, ctx->clam.fd);
@@ -1193,10 +1170,10 @@ static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname)
     char buf[MAXPATHLEN];
     char* t;
 
-    if(!g_quarantine)
+    if(!g_state.quarantine)
         return 0;
 
-    strlcpy(buf, g_directory, MAXPATHLEN);
+    strlcpy(buf, g_state.directory, MAXPATHLEN);
     strlcat(buf, "/virus.", MAXPATHLEN);
 
     /* Points to null terminator */
@@ -1328,7 +1305,7 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
 
     while(fgets(ctx->line, LINE_LENGTH, file) != NULL)
     {
-        if(g_header && !header)
+        if(g_state.header && !header)
         {
             /*
              * The first blank line we see means the headers are done.
@@ -1336,7 +1313,7 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
              */
             if(is_blank_line(ctx->line))
             {
-                if(clio_write_data_raw(ctx, &(ctx->server), (char*)g_header, strlen(g_header)) == -1 ||
+                if(clio_write_data_raw(ctx, &(ctx->server), (char*)g_state.header, strlen(g_state.header)) == -1 ||
                    clio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
 

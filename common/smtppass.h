@@ -39,6 +39,10 @@
 #ifndef __CLAMSMTPD_H__
 #define __CLAMSMTPD_H__
 
+#include <sock_any.h>
+
+/* IO Buffers see clio.c ---------------------------------------------------- */
+
 #define BUF_LEN 256
 
 typedef struct clio
@@ -49,6 +53,8 @@ typedef struct clio
     size_t buflen;
 }
 clio_t;
+
+/* The main context --------------------------------------------------------- */
 
 /*
  * A generous maximum line length. It needs to be longer than
@@ -75,16 +81,11 @@ typedef struct clamsmtp_context
 }
 clamsmtp_context_t;
 
-extern int g_daemonized;              /* Currently running as a daemon */
-extern int g_debuglevel;              /* what gets logged to console */
-extern pthread_mutex_t g_mutex;       /* The main mutex */
-extern struct timeval g_timeout;
-extern int g_quit;
-
-struct sockaddr_any;
 #define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (LINE_LENGTH - 2))
 #define RETURN(x)               { ret = x; goto cleanup; }
 
+
+/* Implemented in clio.c ---------------------------------------------------- */
 
 #define CLIO_TRIM           0x00000001
 #define CLIO_DISCARD        0x00000002
@@ -98,5 +99,47 @@ int clio_select(clamsmtp_context_t* ctx, clio_t** io);
 int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int trim);
 int clio_write_data(clamsmtp_context_t* ctx, clio_t* io, const char* data);
 int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf, int len);
+
+
+/* Implemented in clstate.c ------------------------------------------------ */
+
+typedef struct clstate
+{
+	/* Settings ------------------------------- */
+	int debug_level;				/* The level to print stuff to console */
+	int max_threads;				/* Maximum number of threads to process at once */
+	struct timeval timeout;			/* Timeout for communication */
+
+	struct sockaddr_any outaddr;	/* The outgoing address */
+	const char* outname;
+	struct sockaddr_any clamaddr;   /* Address for connecting to clamd */
+	const char* clamname;
+	struct sockaddr_any listenaddr; /* Address to listen on */
+    const char* listenname;
+
+	const char* header;	            /* The header to add to email */
+	const char* directory;     		/* The directory for temp files */
+    const char* pidfile;            /* The process id file */
+	int bounce;                     /* Send back a reject line */
+	int quarantine;                 /* Leave virus files in temp dir */
+	int debug_files;                /* Leave all files in temp dir */
+
+	/* State --------------------------------- */
+	int daemonized; 			/* Whether process is daemonized or not */
+	pthread_mutex_t mutex;    	/* The main mutex */
+	int quit;					/* Quit the process */
+
+	/* Internal Use ------------------------- */
+	char* _p;
+    pthread_mutexattr_t _mtxattr;
+}
+clstate_t;
+
+extern clstate_t g_state;
+
+void clstate_init(clstate_t* state);
+int clstate_parse_config(clstate_t* state, const char* configfile);
+void clstate_validate(clstate_t* state);
+void clstate_cleanup(clstate_t* state);
 
 #endif /* __CLAMSMTPD_H__ */

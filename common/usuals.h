@@ -71,4 +71,6 @@
   #define ASSERT
 #endif
 
+#define KL(s)               ((sizeof(s) - 1) / sizeof(char))
+
 #endif /* __USUALS_H__ */

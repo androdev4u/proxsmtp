@@ -1090,23 +1090,35 @@ static const char* get_successful_rsp(const char* line, int* cont)
 
 void sp_add_log(spctx_t* ctx, char* prefix, char* line)
 {
-    int l = SP_LINE_LENGTH;
     char* t = ctx->logline;
+    int l = strlen(t);
+    int x;
 
-    ASSERT(l >= 0);
+    ASSERT(l <= SP_LINE_LENGTH);
 
-    if(t[0] != 0)
-        strlcat(ctx->logline, ", ", l);
+    /* Add up necessary lengths */
+    x = 2 + strlen(prefix) + strlen(line) + 1;
 
-    strlcat(ctx->logline, prefix, l);
+    if(l + x >= SP_LINE_LENGTH)
+        l = SP_LINE_LENGTH - x;
+
+    t += l;
+    l = SP_LINE_LENGTH - l;
+
+    *t = 0;
+
+    if(ctx->logline[0] != 0)
+        strlcat(t, ", ", l);
+
+    strlcat(t, prefix, l);
 
     /* Skip initial white space */
     line = trim_start(line);
 
-    strlcat(ctx->logline, line, l);
+    strlcat(t, line, l);
 
     /* Skip later white space */
-    trim_end(ctx->logline);
+    trim_end(t);
 }
 
 int sp_read_data(spctx_t* ctx, const char** data)

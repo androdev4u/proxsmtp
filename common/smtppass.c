@@ -34,6 +34,7 @@
  * CONTRIBUTORS
  *  Nate Nielsen <nielsen@memberwebs.com>
  *  Andreas Steinmetz <ast@domdv.de>
+ *  Rubio Vaughan <rubio@passim.net>
  */
 
 #include <sys/time.h>

@@ -82,7 +82,9 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts);
 
 int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen, int opts);
 
-/* Don't print the port */
+/* Don't print or compare the port */
 #define SANY_OPT_NOPORT         0x01000000
+
+int sock_any_cmp(struct sockaddr_any* a1, struct sockaddr_any* a2, int opts);
 
 #endif /* __SOCK_ANY_H__ */

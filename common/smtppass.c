@@ -52,6 +52,11 @@
 #include <err.h>
 
 #include "usuals.h"
+
+#ifdef LINUX_TRANSPARENT_PROXY
+#include <linux/netfilter_ipv4.h>
+#endif
+
 #include "compat.h"
 #include "sock_any.h"
 #include "clamsmtpd.h"
@@ -142,6 +147,7 @@ static void pid_file(const char* pidfile, int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
 static int smtp_passthru(clamsmtp_context_t* ctx);
+static int connect_out(clamsmtp_context_t* ctx);
 static int connect_clam(clamsmtp_context_t* ctx);
 static int disconnect_clam(clamsmtp_context_t* ctx);
 static void add_to_logline(char* logline, char* prefix, char* line);
@@ -542,10 +548,6 @@ static void connection_loop(int sock)
 static void* thread_main(void* arg)
 {
     clamsmtp_thread_t* thread = (clamsmtp_thread_t*)arg;
-    struct sockaddr_any addr;
-    struct sockaddr_any* outaddr;
-    const char* outname;
-    char buf[MAXPATHLEN];
     clamsmtp_context_t* ctx = NULL;
     int processing = 0;
     int ret = 0;
@@ -590,44 +592,13 @@ static void* thread_main(void* arg)
     ASSERT(ctx->client.fd != -1);
     messagex(ctx, LOG_DEBUG, "processing %d on thread %x", ctx->client.fd, (int)pthread_self());
 
-    memset(&addr, 0, sizeof(addr));
-    SANY_LEN(addr) = sizeof(addr);
-
-    /* Get the peer name */
-    if(getpeername(ctx->client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1 ||
-       sock_any_ntop(&addr, buf, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
-        message(ctx, LOG_WARNING, "couldn't get peer address");
-    else
-        messagex(ctx, LOG_INFO, "accepted connection from: %s", buf);
-
-
-    /* Create the server connection address */
-    outaddr = &(g_state.outaddr);
-    outname = g_state.outname;
-
-    if(SANY_TYPE(*outaddr) == AF_INET &&
-       outaddr->s.in.sin_addr.s_addr == 0)
-    {
-        /* Use the incoming IP as the default */
-        in_addr_t in = addr.s.in.sin_addr.s_addr;
-        memcpy(&addr, &(g_state.outaddr), sizeof(addr));
-        addr.s.in.sin_addr.s_addr = in;
-
-        outaddr = &addr;
-
-        if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)
-            outname = buf;
-    }
-
-
-    /* Connect to the server */
-    if(clio_connect(ctx, &(ctx->server), outaddr, outname) == -1)
+    /* Connect to the outgoing server ... */
+    if(connect_out(ctx) == -1)
         RETURN(-1);
 
     /* ... and to the AV daemon */
     if(connect_clam(ctx) == -1)
         RETURN(-1);
-
 
     /* call the processor */
     processing = 1;
@@ -655,6 +626,90 @@ cleanup:
     return (void*)(ret == 0 ? 0 : 1);
 }
 
+static int connect_out(clamsmtp_context_t* ctx)
+{
+    struct sockaddr_any peeraddr;
+    struct sockaddr_any addr;
+    struct sockaddr_any* outaddr;
+    char buf[MAXPATHLEN];
+    const char* outname;
+
+    memset(&peeraddr, 0, sizeof(peeraddr));
+    SANY_LEN(peeraddr) = sizeof(peeraddr);
+
+    /* Get the peer name */
+    if(getpeername(ctx->client.fd, &SANY_ADDR(peeraddr), &SANY_LEN(peeraddr)) == -1 ||
+       sock_any_ntop(&peeraddr, buf, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
+        message(ctx, LOG_WARNING, "couldn't get peer address");
+    else
+        messagex(ctx, LOG_INFO, "accepted connection from: %s", buf);
+
+    /* Create the server connection address */
+    outaddr = &(g_state.outaddr);
+    outname = g_state.outname;
+
+    /* For transparent proxying we have to discover the address to connect to */
+    if(g_state.transparent)
+    {
+        memset(&addr, 0, sizeof(addr));
+        SANY_LEN(addr) = sizeof(addr);
+
+#ifdef LINUX_TRANSPARENT_PROXY
+        if(getsockopt(ctx->client.fd, SOL_IP, SO_ORIGINAL_DST, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
+#else
+        if(getsockname(ctx->client.fd, &SANY_ADDR(addr1), &SANY_LEN(addr1)) == -1)
+#endif
+        {
+            message(ctx, LOG_ERR, "couldn't get source address for transparent proxying");
+            return -1;
+        }
+
+        /* Check address types */
+        if(sock_any_cmp(&addr, &peeraddr, SANY_OPT_NOPORT) == 0)
+        {
+            messagex(ctx, LOG_ERR, "loop detected in transparent proxying");
+            return -1;
+        }
+
+        outaddr = &addr;
+    }
+
+    /* No transparent proxy but check for loopback option */
+    else
+    {
+        if(SANY_TYPE(*outaddr) == AF_INET &&
+           outaddr->s.in.sin_addr.s_addr == 0)
+        {
+            /* Use the incoming IP as the default */
+            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
+            memcpy(&(addr.s.in.sin_addr), &(peeraddr.s.in.sin_addr), sizeof(addr.s.in.sin_addr));
+            outaddr = &addr;
+        }
+#ifdef HAVE_INET6
+        else if(SANY_TYPE(*outaddr) == AF_INET6 &&
+                outaddr->s.in.in6.sin_addr.s_addr == 0)
+        {
+            /* Use the incoming IP as the default */
+            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
+            memcpy(&(addr.s.in.sin6_addr), &(peeraddr.s.in.sin6_addr), sizeof(addr.s.in.sin6_addr));
+            outaddr = &addr;
+        }
+#endif
+    }
+
+    /* Reparse name if possible */
+    if(outaddr != &(g_state.outaddr))
+    {
+        if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)
+            outname = "unknown";
+    }
+
+    /* Connect to the server */
+    if(clio_connect(ctx, &(ctx->server), outaddr, outname) == -1)
+        return -1;
+
+    return 0;
+}
 
 /* ----------------------------------------------------------------------------------
  *  SMTP HANDLING

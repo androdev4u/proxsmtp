@@ -122,6 +122,7 @@ typedef struct clstate
 	int bounce;                     /* Send back a reject line */
 	int quarantine;                 /* Leave virus files in temp dir */
 	int debug_files;                /* Leave all files in temp dir */
+    int transparent;                /* Transparent proxying */
 
 	/* State --------------------------------- */
 	int daemonized; 			/* Whether process is daemonized or not */

@@ -90,7 +90,7 @@ static void log_io_data(clamsmtp_context_t* ctx, clio_t* io, const char* data, i
         memcpy(buf, data, len);
         buf[len] = 0;
 
-        messagex(0, LOG_DEBUG, "%s%s%s", GET_IO_NAME(io),
+        messagex(ctx, LOG_DEBUG, "%s%s%s", GET_IO_NAME(io),
             read ? " < " : " > ", buf);
 
         data += pos;

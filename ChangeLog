@@ -1,3 +1,7 @@
+0.6
+  - Added CLIENT and SERVER variables to VirusAction script environment.
+  - Even better logging for network errors.
+
 0.5
   - Added sample scripts.
   - Initial fork from clamsmtp version 0.9.x

@@ -19,7 +19,6 @@ piddir=/var/run/
 case $1 in
 start)
         mkdir -p $piddir
-        chown $user $piddir
         $prefix/sbin/proxsmtpd -p $piddir/proxsmtpd.pid
         echo -n "proxsmtpd "
         ;;

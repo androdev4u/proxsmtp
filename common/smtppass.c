@@ -78,7 +78,7 @@ typedef struct spthread
 spthread_t;
 
 /* -----------------------------------------------------------------------
- *  STRINGS
+ *  DATA
  */
 
 #define CRLF                "\r\n"
@@ -93,6 +93,7 @@ spthread_t;
 #define SMTP_REJPREFIX      "550 Content Rejected; "
 
 #define SMTP_DATA           "DATA" CRLF
+#define SMTP_NOOP           "NOOP" CRLF
 #define SMTP_BANNER         "220 smtp.passthru" CRLF
 #define SMTP_HELO_RSP       "250 smtp.passthru" CRLF
 #define SMTP_EHLO_RSP       "250-smtp.passthru" CRLF
@@ -125,6 +126,9 @@ spthread_t;
 #define CFG_DELIMS      ": \t"
 
 #define LINE_TOO_LONG(l)      ((l) >= (SP_LINE_LENGTH - 2))
+
+/* The amount interval at which to send NOOPS to server */
+#define INTERACTION_DELTA   10
 
 /* -----------------------------------------------------------------------
  *  CONFIGURATION OPTIONS
@@ -179,6 +183,7 @@ static int read_server_response(spctx_t* ctx);
 static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
 static const char* get_successful_rsp(const char* line, int* cont);
+static void do_server_noop(spctx_t* ctx);
 
 /* Used externally in some cases */
 int sp_parse_option(const char* name, const char* option);
@@ -1123,6 +1128,14 @@ int sp_read_data(spctx_t* ctx, const char** data)
         return -1;
     };
 
+    /*
+     * During this time we're just reading from the client. If we haven't
+     * had any interaction with the server recently then send something
+     * to let it know we're still around.
+     */
+    if((ctx->server.last_action + INTERACTION_DELTA) < time(NULL))
+        do_server_noop(ctx);
+
     if(ctx->_crlf && strcmp(ctx->client.line, DATA_END_SIG) == 0)
         return 0;
 
@@ -1371,6 +1384,12 @@ static int read_server_response(spctx_t* ctx)
         sp_messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
 
     return 0;
+}
+
+static void do_server_noop(spctx_t* ctx)
+{
+    if(spio_write_data(ctx, &(ctx->server), SMTP_NOOP) != -1)
+        spio_read_line(ctx, &(ctx->server), SPIO_DISCARD);
 }
 
 void sp_setup_forked(spctx_t* ctx, int file)

@@ -245,6 +245,9 @@ unsigned int spio_select(spctx_t* ctx, ...)
         if(i > (sizeof(int) * 8) - 2)
             break;
 
+        /* We have data on the descriptor, which is an action */
+        io->last_action = time(NULL);
+
         /* Check if the buffer has something in it */
         if(FD_ISSET(io->fd, &mask))
             ret |= (1 << i);
@@ -362,6 +365,9 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
 
             return count;
         }
+
+        /* Read data which is a descriptor action */
+        io->last_action = time(NULL);
 
         /* Check for a new line */
         p = (char*)memchr(at, '\n', x);
@@ -489,6 +495,8 @@ int spio_write_data_raw(spctx_t* ctx, spio_t* io, unsigned char* buf, int len)
     if(io->fd == -1)
         return 0;
 
+    io->last_action = time(NULL);
+
     while(len > 0)
     {
         r = write(io->fd, buf, len);
@@ -555,6 +563,8 @@ void spio_read_junk(spctx_t* ctx, spio_t* io)
         l = read(io->fd, buf, sizeof(buf) - 1);
         if(l <= 0)
             break;
+
+        io->last_action = time(NULL);
 
         buf[l] = 0;
         t = trim_start(buf);

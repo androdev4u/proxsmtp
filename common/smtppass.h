@@ -66,6 +66,7 @@ typedef struct spio
 {
     int fd;                             /* The file descriptor wrapped */
     const char* name;                   /* The name for logging */
+    time_t last_action;                 /* Time of last action on descriptor */
 
     /* Internal use only */
     char line[SP_LINE_LENGTH];
@@ -124,6 +125,7 @@ typedef struct spctx
     int _crlf;                      /* Private data */
     char _l1[SP_LINE_LENGTH];
     char _l2[SP_LINE_LENGTH];
+    time_t _tm;
 }
 spctx_t;
 

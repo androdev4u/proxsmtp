@@ -87,6 +87,13 @@ to a file and the file name is passed to the
 using the 
 .Ar EMAIL
 environment variable.
+.It Ar KeepAlives
+On slow connections the server will sometimes timeout before 
+.Xr proxsmtpd 8 
+is finished filtering the file. This option sends NOOP's to the server
+to keep the connection alive. Specify the number of seconds, or 0
+to disable.
+[ Default: 0 ]
 .It Ar Listen
 The address and port to listen for SMTP connections on. See syntax of 
 addresses below. 

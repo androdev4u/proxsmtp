@@ -47,6 +47,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <err.h>
+#include <signal.h>
 
 #include "usuals.h"
 
@@ -73,7 +74,7 @@ pxstate_t;
  *  STRINGS
  */
 
-#define SMTP_REJECTED       "550 Content Rejected\r\n"
+#define REJECTED            "Content Rejected"
 #define DEFAULT_CONFIG      CONF_PREFIX "/proxsmtpd.conf"
 
 #define CFG_FILTERCMD       "FilterCommand"
@@ -107,6 +108,7 @@ pxstate_t g_pxstate;
 static void usage();
 static int process_file_command(spctx_t* sp);
 static int process_pipe_command(spctx_t* sp);
+static void final_reject_message(char* buf, int buflen);
 static void buffer_reject_message(char* data, char* buf, int buflen);
 static int kill_process(spctx_t* sp, pid_t pid);
 static int wait_process(spctx_t* sp, pid_t pid, int* status);
@@ -379,9 +381,11 @@ static int process_file_command(spctx_t* sp)
                     sp_message(sp, LOG_ERR, "couldn't read data from filter command");
                     RETURN(-1);
                 }
+
+                break;
             }
 
-            else if(r <= 0)
+            if(r == 0)
                 break;
 
             /* Null terminate */
@@ -425,10 +429,12 @@ static int process_file_command(spctx_t* sp)
     /* Check code and use stderr if bad code */
     else
     {
-        if(sp_fail_data(sp, ebuf[0] == 0 ? SMTP_REJECTED : ebuf) == -1)
+        final_reject_message(ebuf, sizeof(ebuf));
+
+        if(sp_fail_data(sp, ebuf) == -1)
             RETURN(-1); /* message already printed */
 
-        sp_add_log(sp, "status=", ebuf[0] == 0 ? "FAILED" : ebuf);
+        sp_add_log(sp, "status=", ebuf);
     }
 
     ret = 0;
@@ -741,19 +747,21 @@ static int process_pipe_command(spctx_t* sp)
     /* A successful response */
     if(WEXITSTATUS(status) == 0)
     {
-        sp_add_log(sp, "status=", "FILTERED");
-
         if(sp_done_data(sp, NULL) == -1)
             RETURN(-1); /* message already printed */
+
+        sp_add_log(sp, "status=", "FILTERED");
     }
 
     /* Check code and use stderr if bad code */
     else
     {
-        sp_add_log(sp, "status=", ebuf[0] == 0 ? "FAILED" : ebuf);
+        final_reject_message(ebuf, sizeof(ebuf));
 
-        if(sp_fail_data(sp, ebuf[0] == 0 ? SMTP_REJECTED : ebuf) == -1)
+        if(sp_fail_data(sp, ebuf) == -1)
             RETURN(-1); /* message already printed */
+
+        sp_add_log(sp, "status=", ebuf);
     }
 
     ret = 0;
@@ -785,29 +793,61 @@ cleanup:
     return ret;
 }
 
+static void final_reject_message(char* buf, int buflen)
+{
+    if(buf[0] == 0)
+        strlcpy(buf, REJECTED, buflen);
+    else
+        trim_end(buf);
+}
+
 static void buffer_reject_message(char* data, char* buf, int buflen)
 {
-    char* t;
+    int len = strlen(data);
+    char* t = data + len;
+    int newline = 0;
 
-    /* Take away all junk at beginning and end */
-    data = trim_space(data);
+    while(t > data && isspace(*(t - 1)))
+    {
+        t--;
 
-    /*
-     * Look for the last new line in the message. We
-     * don't care about stuff before that.
-     */
-    t = strchr(data, '\n');
-    if(t == NULL)
-    {
-        t = data;
-    }
-    else
-    {
-        t++;
-        buf[0] = 0; /* Start a new message */
+        if(*t == '\n')
+            newline = 1;
     }
 
-    strlcat(buf, t, buflen);
+    /* No valid line */
+    if(t > data)
+    {
+        if(newline)
+            *t = 0;
+
+        t = strrchr(data, '\n');
+        if(t == NULL)
+        {
+            t = trim_start(data);
+
+            /*
+             * Basically if we already have a newline at the end
+             * then we need to start a new line
+             */
+            if(buf[strlen(buf)] == '\n')
+                buf[0] = 0;
+        }
+        else
+        {
+            t = trim_start(t);
+
+            /* Start a new line */
+            buf[0] = 0;
+        }
+
+        /* t points to a valid line */
+        strlcat(buf, t, buflen);
+    }
+
+    /* Always append if we found a newline */
+    if(newline)
+        strlcat(buf, "\n", buflen);
 }
 
 static int wait_process(spctx_t* sp, pid_t pid, int* status)

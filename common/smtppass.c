@@ -1314,6 +1314,7 @@ cleanup:
 
 int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 {
+    char buf[256 + KL(SMTP_REJPREFIX) + KL(CRLF) + 1];
     char* t = NULL;
     int len, x;
     int pref = 0;
@@ -1335,14 +1336,11 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 
     if(pref || crlf)
     {
-        x = (len > 256 ? 256 : len) + KL(SMTP_REJPREFIX) + KL(CRLF) + 1;
-        t = (char*)alloca(x + 1);
-
         /* Note that we truncate long lines */
-        snprintf(t, x, "%s%.256s%s", pref ? SMTP_REJPREFIX : "",
+        snprintf(buf, sizeof(buf), "%s%.256s%s", pref ? SMTP_REJPREFIX : "",
                     smtp_status, crlf ? CRLF : "");
-        t[x] = 0;
-        smtp_status = t;
+        buf[sizeof(buf) - 1] = 0;
+        smtp_status = buf;
     }
 
     if(spio_write_data(ctx, &(ctx->client), smtp_status) == -1)

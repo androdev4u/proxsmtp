@@ -1,0 +1,135 @@
+.\" 
+.\" Copyright (c) 2004, Nate Nielsen
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without 
+.\" modification, are permitted provided that the following conditions 
+.\" are met:
+.\" 
+.\"     * Redistributions of source code must retain the above 
+.\"       copyright notice, this list of conditions and the 
+.\"       following disclaimer.
+.\"     * Redistributions in binary form must reproduce the 
+.\"       above copyright notice, this list of conditions and 
+.\"       the following disclaimer in the documentation and/or 
+.\"       other materials provided with the distribution.
+.\"     * The names of contributors to this software may not be 
+.\"       used to endorse or promote products derived from this 
+.\"       software without specific prior written permission.
+.\" 
+.\" THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
+.\" "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT 
+.\" LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS 
+.\" FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE 
+.\" COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, 
+.\" INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, 
+.\" BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS 
+.\" OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED 
+.\" AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
+.\" OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF 
+.\" THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH 
+.\" DAMAGE.
+.\" 
+.\"
+.\" CONTRIBUTORS
+.\"  Nate Nielsen <nielsen@memberwebs.com>
+.\"
+.Dd September, 2004
+.Dt proxsmtpd.conf 5
+.Os proxsmtp 
+.Sh NAME
+.Nm proxsmtpd.conf
+.Nd the configuration file for 
+.Xr proxsmtpd 8
+.Sh DESCRIPTION
+.Xr proxsmtpd 8
+reads a configuration file when starting up. The location of the file is dependent
+on how you compiled proxsmtp but it should usually be in either the
+.Pa /usr/local/etc/
+or 
+.Pa /etc/
+directories. If 
+.Xr proxsmtpd 8
+does not find it's configuration file it'll print a warning when it starts up along
+with the location it's expecting to find it in. You can also specify a different 
+location for a config file by passing the 
+.Fl f
+argument to 
+.Xr proxsmtpd 8
+.Pp
+The settings are specified one per line. The setting names comes first, followed
+by a colon and then the value. Comments start with the '#' character on a line 
+of their own. Whitespace is ignored at the beginning of line, end of line and 
+around the colons. 
+.Pp
+A sample configuration file can be found in the 
+.Pa doc/
+directory of the proxsmtp distribution.
+.Sh SETTINGS
+The various settings are as follows:
+.Bl -tag -width Fl
+.It Ar FilterCommand
+This is the command used to filter email through. If not specified then no 
+filtering will be done. Specify all the arguments the command needs as you 
+would on a command-line. 
+[ Default: no filtering ]
+.It Ar FilterTimeout
+The amount of time in seconds to wait for the 
+.Ar FilterCommand
+to process email data.
+[ Default: 30 seconds ] 
+.It Ar FilterType
+When set to 'pipe' the email data is piped through the 
+.Ar FilterCommand
+using standard in and standard out. When set to 'file' the email data is saved
+to a file and the file name is passed to the 
+.Ar FilterCommand
+using the 
+.Ar EMAIL
+environment variable.
+.It Ar Listen
+The address and port to listen for SMTP connections on. See syntax of 
+addresses below. 
+[ Default: port 10025 on all local IP addresses ] 
+.It Ar MaxConnections
+Specifies the maximum number of connections to accept at once. 
+[ Default: 64 ]
+.It Ar OutAddress
+The address of the SMTP server to send email to once it's been scanned. See 
+syntax of addreses below. 
+[ Required ]
+.It Ar TempDirectory
+The directory to write temp files too. 
+[ Default:
+.Pa /tmp
+]
+.It Ar TimeOut
+The number of seconds to wait while reading data from network connections.
+[ Default: 180 seconds ]
+.It Ar TransparentProxy
+This option enables transparent proxy support, which allows you to route all 
+SMTP traffic that's going through a gateway through proxsmtp which will then 
+send it on to its final destination. This setup usually involves firewall 
+rules which redirect traffic to proxsmtp, and the setup varies from OS to OS.
+.It Ar User
+The user to run as. If this option is specified then
+.Xr proxsmtpd 8
+must be started as root. It will then drop root privileges and run as the 
+specified user. The user can either be a name or a numerical user id.
+.El
+.Sh ADDRESSES
+Addresses can be specified in multiple formats:
+.Bl -bullet
+.It 
+Unix local addresses can be specified by specifying their full path. 
+(ie: '/var/run/socket').
+.It 
+IP addresses can be specified using dotted notation with a colon before
+the port number (ie: '127.0.0.1:3310').
+.It 
+IPv6 addresses are implemented but disabled. The code needs testing.
+.El
+.Sh SEE ALSO
+.Xr proxsmtpd 8 
+.Sh AUTHOR
+.An Nate Nielsen Aq nielsen@memberwebs.com

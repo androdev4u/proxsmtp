@@ -42,14 +42,16 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 
+#include <ctype.h>
 #include <paths.h>
 #include <stdio.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <syslog.h>
 #include <signal.h>
 #include <errno.h>
+#include <err.h>
+#include <pthread.h>
 
 #include "usuals.h"
 #include "compat.h"
@@ -92,7 +94,9 @@ clamsmtp_thread_t;
 #define SMTP_DATA           "DATA" CRLF
 #define SMTP_BANNER         "220 clamsmtp" CRLF
 #define SMTP_HELO_RSP       "250 clamsmtp" CRLF
-#define SMTP_DELIMS         "\r\n\t :-"
+#define SMTP_EHLO_RSP       "250-clamsmtp" CRLF
+#define SMTP_DELIMS         "\r\n\t :"
+#define SMTP_MULTI_DELIMS   " -"
 
 #define ESMTP_PIPELINE      "PIPELINING"
 #define ESMTP_TLS           "STARTTLS"
@@ -169,7 +173,7 @@ pthread_mutexattr_t g_mutexattr;
  *  FORWARD DECLARATIONS
  */
 
-static usage();
+static void usage();
 static void on_quit(int signal);
 static void pid_file(const char* pid, int write);
 static void connection_loop(int sock);
@@ -199,7 +203,6 @@ static int write_data_raw(clamsmtp_context_t* ctx, int* fd, unsigned char* buf, 
 int main(int argc, char* argv[])
 {
     const char* listensock = DEFAULT_SOCKET;
-    clamsmtp_thread_t* threads = NULL;
     struct sockaddr_any addr;
     char* pidfile = NULL;
     int daemonize = 1;
@@ -385,7 +388,7 @@ static void on_quit(int signal)
     /* fprintf(stderr, "clamsmtpd: got signal to quit\n"); */
 }
 
-static int usage()
+static void usage()
 {
     fprintf(stderr, "usage: clamsmtpd [-bq] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
             "[-l listenaddr] [-m maxconn] [-p pidfile] [-t timeout] serveraddr\n");
@@ -430,7 +433,6 @@ static void pid_file(const char* pidfile, int write)
 static void connection_loop(int sock)
 {
     clamsmtp_thread_t* threads = NULL;
-    struct sockaddr_any addr;
     int fd, i, x, r;
 
     /* Create the thread buffers */
@@ -863,11 +865,23 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             {
                 filter_host = 0;
 
-                if(check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_DELIMS) > 0)
+                /* Check for a simple '250 xxxx' */
+                if(is_first_word(ctx->line, OK_RSP, KL(OK_RSP)))
                 {
                     messagex(ctx, LOG_DEBUG, "intercepting host response");
 
                     if(write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
+                        RETURN(-1);
+
+                    continue;
+                }
+
+                /* Check for the continued response '250-xxxx' */
+                if(check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_MULTI_DELIMS) > 0)
+                {
+                    messagex(ctx, LOG_DEBUG, "intercepting host response");
+
+                    if(write_data(ctx, &(ctx->client), SMTP_EHLO_RSP) == -1)
                         RETURN(-1);
 
                     continue;
@@ -880,7 +894,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
              */
             if(filter_ehlo)
             {
-                if((r = check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_DELIMS)) > 0)
+                if((r = check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_MULTI_DELIMS)) > 0)
                 {
                     char* p = ctx->line + r;
                     if(is_first_word(p, ESMTP_PIPELINE, KL(ESMTP_PIPELINE)) ||
@@ -1079,7 +1093,6 @@ static int read_server_response(clamsmtp_context_t* ctx)
 
 static int connect_clam(clamsmtp_context_t* ctx)
 {
-    int r, len = -1;
     int ret = 0;
 
     ASSERT(ctx);
@@ -1349,11 +1362,8 @@ cleanup:
 static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
 {
     FILE* file = NULL;
-    const char* t;
-    const char* e;
     int header = 0;
     int ret = 0;
-    int len, r;
 
     file = fopen(filename, "r");
     if(file == NULL)

@@ -68,6 +68,9 @@
 #include "usuals.h"
 #include "compat.h"
 
+#include <ctype.h>
+#include <stdlib.h>
+
 #ifndef HAVE_REALLOCF
 
 void* reallocf(void* ptr, size_t size)

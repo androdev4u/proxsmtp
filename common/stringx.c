@@ -38,11 +38,16 @@
 
 #include <sys/types.h>
 
+#include <ctype.h>
 #include <syslog.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include <alloca.h>
+#include <err.h>
+#include <stdarg.h>
+#include <strings.h>
 
 #include "usuals.h"
 #include "compat.h"
@@ -62,7 +67,6 @@ static void vmessage(clamsmtp_context_t* ctx, int level, int err,
     size_t len;
     char* m;
     int e = errno;
-    int x;
 
     if(g_daemonized)
     {
@@ -132,7 +136,6 @@ void log_fd_data(clamsmtp_context_t* ctx, const char* data, int* fd, int read)
     #define ptrdiff(o, t)
 
     char prefix[16];
-    const char* t;
 
     ASSERT(ctx);
     ASSERT(ismember(ctx, fd));

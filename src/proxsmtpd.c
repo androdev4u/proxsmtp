@@ -77,10 +77,10 @@ pxstate_t;
 #define DEFAULT_CONFIG      CONF_PREFIX "/proxsmtpd.conf"
 
 #define CFG_FILTERCMD       "FilterCommand"
-#define CFG_PIPECMD         "Pipe"
+#define CFG_PIPECMD         "PipeData"
 #define CFG_DIRECTORY       "TempDirectory"
 #define CFG_DEBUGFILES      "DebugFiles"
-#define CFG_CMDTIMEOUT      "CommandTimeout"
+#define CFG_CMDTIMEOUT      "FilterTimeout"
 
 /* Poll time for waiting operations in milli seconds */
 #define POLL_TIME           20
@@ -209,7 +209,13 @@ int cb_check_data(spctx_t* ctx)
         if(sp_cache_data(ctx) == -1 ||
            sp_done_data(ctx, NULL) == -1)
             return -1;  /* Message already printed */
+
+        return 0;
     }
+
+    /* Cleanup any old filters hanging around */
+    while(waitpid(-1, &r, WNOHANG) > 0)
+        ;
 
     if(g_pxstate.pipe_cmd)
         r = process_pipe_command(ctx);
@@ -312,6 +318,9 @@ static int process_file_command(spctx_t* sp)
     /* The child process */
     case 0:
 
+        /* Close our unused ends of the pipes */
+        close(pipe_e[READ_END]);
+
         /* Fixup our ends of the pipe */
         if(dup2(pipe_e[WRITE_END], STDERR) == -1)
         {
@@ -319,24 +328,20 @@ static int process_file_command(spctx_t* sp)
             exit(1);
         }
 
-        /* Setup environment nicely */
-        if(setenv("EMAIL", sp->cachename, 1) == -1 ||
-           setenv("TMP", g_pxstate.directory, 1) == -1)
-        {
-            sp_messagex(sp, LOG_ERR, "couldn't setup environment for filter command");
-            exit(1);
-        }
+        /* All the necessary environment vars */
+        sp_setup_forked(sp, 1);
 
         /* Now run the filter command */
         execl("/bin/sh", "sh", "-c", g_pxstate.command, NULL);
 
         /* If that returned then there was an error */
         sp_message(sp, LOG_ERR, "error executing the shell for filter command");
-        exit(1);
+        _exit(1);
         break;
     };
 
     /* The parent process */
+    sp_messagex(sp, LOG_DEBUG, "executed filter command: %s (pid: %d)", g_pxstate.command, (int)pid);
 
     /* Close our copies of the pipes that we don't need */
     close(pipe_e[WRITE_END]);
@@ -348,6 +353,7 @@ static int process_file_command(spctx_t* sp)
     /* Main read write loop */
     for(;;)
     {
+        FD_ZERO(&rmask);
         FD_SET(pipe_e[READ_END], &rmask);
 
         r = select(FD_SETSIZE, &rmask, NULL, NULL, &(g_pxstate.timeout));
@@ -368,14 +374,14 @@ static int process_file_command(spctx_t* sp)
             r = read(pipe_e[READ_END], obuf, sizeof(obuf) - 1);
             if(r < 0)
             {
-                if(errno != EINTR || errno != EAGAIN)
+                if(errno != EINTR && errno != EAGAIN)
                 {
                     sp_message(sp, LOG_ERR, "couldn't read data from filter command");
                     RETURN(-1);
                 }
             }
 
-            else if(r == 0)
+            else if(r <= 0)
                 break;
 
             /* Null terminate */
@@ -391,6 +397,9 @@ static int process_file_command(spctx_t* sp)
             pid = 0;
             break;
         }
+
+        if(sp_is_quit())
+            break;
     }
 
     ASSERT(pid == 0);
@@ -409,6 +418,8 @@ static int process_file_command(spctx_t* sp)
     {
         if(sp_done_data(sp, NULL) == -1)
             RETURN(-1); /* message already printed */
+
+        sp_add_log(sp, "status=", "FILTERED");
     }
 
     /* Check code and use stderr if bad code */
@@ -416,6 +427,8 @@ static int process_file_command(spctx_t* sp)
     {
         if(sp_fail_data(sp, ebuf[0] == 0 ? SMTP_REJECTED : ebuf) == -1)
             RETURN(-1); /* message already printed */
+
+        sp_add_log(sp, "status=", ebuf[0] == 0 ? "FAILED" : ebuf);
     }
 
     ret = 0;
@@ -428,7 +441,13 @@ cleanup:
         close(pipe_e[WRITE_END]);
 
     if(pid != 0)
+    {
+        sp_messagex(sp, LOG_WARNING, "killing filter process (pid %d)", (int)pid);
         kill_process(sp, pid);
+    }
+
+    if(ret < 0)
+        sp_add_log(sp, "status=", "FILTER-ERROR");
 
     return ret;
 }
@@ -479,25 +498,34 @@ static int process_pipe_command(spctx_t* sp)
     /* The child process */
     case 0:
 
+        /* Close our unused ends of the pipes */
+        close(pipe_i[WRITE_END]);
+        close(pipe_o[READ_END]);
+        close(pipe_e[READ_END]);
+
         /* Fixup our ends of the pipe */
         if(dup2(pipe_i[READ_END], STDIN) == -1 ||
            dup2(pipe_o[WRITE_END], STDOUT) == -1 ||
            dup2(pipe_e[WRITE_END], STDERR) == -1)
         {
             sp_message(sp, LOG_ERR, "couldn't dup descriptors for filter command");
-            exit(1);
+            _exit(1);
         }
+
+        /* All the necessary environment vars */
+        sp_setup_forked(sp, 0);
 
         /* Now run the filter command */
         execl("/bin/sh", "sh", "-c", g_pxstate.command, NULL);
 
         /* If that returned then there was an error */
         sp_message(sp, LOG_ERR, "error executing the shell for filter command");
-        exit(1);
+        _exit(1);
         break;
     };
 
     /* The parent process */
+    sp_messagex(sp, LOG_DEBUG, "executed filter command: %s (pid: %d)", g_pxstate.command, (int)pid);
 
     /* Close our copies of the pipes that we don't need */
     close(pipe_i[READ_END]);
@@ -577,36 +605,32 @@ static int process_pipe_command(spctx_t* sp)
             }
 
             /* Write data from buffer */
-            for(;;)
+            r = write(pipe_i[WRITE_END], ibuf, ilen);
+            if(r == -1)
             {
-                r = write(pipe_i[WRITE_END], ibuf, ilen);
-                if(r == -1)
+                if(errno == EPIPE)
                 {
-                    if(errno == EAGAIN || errno == EINTR)
-                        break;
-                    else if(errno == EPIPE)
-                    {
-                        sp_message(sp, LOG_WARNING, "filter command closed input early");
+                    sp_messagex(sp, LOG_WARNING, "filter command closed input early");
 
-                        /* Eat up the rest of the data */
-                        while(sp_read_data(sp, &ibuf) > 0)
-                            ;
-                        done = 1;
-                        break;
-                    }
-
+                    /* Eat up the rest of the data */
+                    while(sp_read_data(sp, &ibuf) > 0)
+                        ;
+                    done = 1;
+                    break;
+                }
+                else if(errno != EAGAIN && errno != EINTR)
+                {
                     /* Otherwise it's a normal error */
                     sp_message(sp, LOG_ERR, "couldn't write to filter command");
                     RETURN(-1);
                 }
+            }
 
-                else
-                {
-                    ilen -= r;
-                    ibuf += r;
-                }
-
-                break;
+            /* A good normal write */
+            else
+            {
+                ilen -= r;
+                ibuf += r;
             }
         }
 
@@ -647,7 +671,7 @@ static int process_pipe_command(spctx_t* sp)
 
                 else if(r < 0)
                 {
-                    if(errno != EINTR || errno != EAGAIN)
+                    if(errno != EINTR && errno != EAGAIN)
                     {
                         sp_message(sp, LOG_ERR, "couldn't read data from filter command");
                         RETURN(-1);
@@ -662,7 +686,7 @@ static int process_pipe_command(spctx_t* sp)
                 n = read(pipe_e[READ_END], obuf, sizeof(obuf) - 1);
                 if(n < 0)
                 {
-                    if(errno != EINTR || errno != EAGAIN)
+                    if(errno != EINTR && errno != EAGAIN)
                     {
                         sp_message(sp, LOG_ERR, "couldn't read data from filter command");
                         RETURN(-1);
@@ -680,7 +704,7 @@ static int process_pipe_command(spctx_t* sp)
             }
 
         }   /* when in 'done' mode we keep reading as long as there's data */
-        while(done && !(r == 0 && n == 0));
+        while(done && (r > 0 || n > 0));
 
         if(done)
             break;
@@ -688,6 +712,10 @@ static int process_pipe_command(spctx_t* sp)
         if(sp_is_quit())
             break;
     }
+
+    /* Close the cache file */
+    if(sp_write_data(sp, NULL, 0) == -1)
+        RETURN(-1); /* message already printed */
 
     /* exit the process if not completed */
     if(pid != 0)
@@ -713,6 +741,8 @@ static int process_pipe_command(spctx_t* sp)
     /* A successful response */
     if(WEXITSTATUS(status) == 0)
     {
+        sp_add_log(sp, "status=", "FILTERED");
+
         if(sp_done_data(sp, NULL) == -1)
             RETURN(-1); /* message already printed */
     }
@@ -720,6 +750,8 @@ static int process_pipe_command(spctx_t* sp)
     /* Check code and use stderr if bad code */
     else
     {
+        sp_add_log(sp, "status=", ebuf[0] == 0 ? "FAILED" : ebuf);
+
         if(sp_fail_data(sp, ebuf[0] == 0 ? SMTP_REJECTED : ebuf) == -1)
             RETURN(-1); /* message already printed */
     }
@@ -742,7 +774,13 @@ cleanup:
         close(pipe_e[WRITE_END]);
 
     if(pid != 0)
+    {
+        sp_messagex(sp, LOG_WARNING, "killing filter process (pid %d)", (int)pid);
         kill_process(sp, pid);
+    }
+
+    if(ret < 0)
+        sp_add_log(sp, "status=", "FILTER-ERROR");
 
     return ret;
 }
@@ -782,7 +820,7 @@ static int wait_process(spctx_t* sp, pid_t pid, int* status)
         switch(waitpid(pid, status, WNOHANG))
         {
         case 0:
-            continue;
+            break;
         case -1:
             sp_message(sp, LOG_CRIT, "error waiting on process");
             return -1;

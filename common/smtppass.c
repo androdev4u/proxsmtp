@@ -533,7 +533,7 @@ static void* thread_main(void* arg)
     if(ctx.client != -1)
         shutdown(ctx.client, SHUT_RDWR);
 
-    messagex(&ctx, LOG_INFO, "closed client connection");
+    messagex(&ctx, LOG_NOTICE, "closed client connection");
 
     /* mark this as done */
     plock();

@@ -1387,7 +1387,6 @@ static int make_header(spctx_t* ctx, const char* format_str, char* header)
                 break;
             }
 
-            ++f;
             ++p;
             --remaining;
         }
@@ -1422,24 +1421,28 @@ static int make_header(spctx_t* ctx, const char* format_str, char* header)
                 remaining -= l;
                 p += l;
                 break;
+            case '%':
+				*p = '%';
+				++p;
+				break;
             default:
-                sp_message(ctx, LOG_WARNING, "invalid header symbol: %%%c", *f);
+                sp_messagex(ctx, LOG_WARNING, "invalid header symbol: %%%c", *f);
                 break;
             };
         }
 
         else
         {
-            *(p++) = *(f++);
+            *(p++) = *f;
             remaining--;
         }
     }
 
-    if(p < header + MAX_HEADER_LENGTH)
-        *p = 0;
+    if((p + 1) < (header + MAX_HEADER_LENGTH))
+        p[1] = 0;
     header[MAX_HEADER_LENGTH - 1] = 0;
     l = p - header;
-    return (l > MAX_HEADER_LENGTH ? MAX_HEADER_LENGTH : l) - 1;
+    return l >= MAX_HEADER_LENGTH ? MAX_HEADER_LENGTH - 1 : l;
 }
 
 int sp_done_data(spctx_t* ctx)
@@ -1875,7 +1878,7 @@ int sp_parse_option(const char* name, const char* value)
         g_state.header = trim_start(value);
 	    if(strlen(g_state.header) == 0)
 	        g_state.header = NULL;
-	    else if(is_first_word(RCVD_HEADER, g_state.header, KL(RCVD_HEADER)) == 0)
+	    else if(is_first_word(RCVD_HEADER, g_state.header, KL(RCVD_HEADER)))
 	        g_state.header_prepend = 1;
 	    ret = 1;
     }

@@ -200,6 +200,8 @@ void sp_init(const char* name)
 
     memset(&g_state, 0, sizeof(g_state));
 
+    sp_message(NULL, LOG_DEBUG, "%s (%s)", name, VERSION);
+
     /* Setup the defaults */
     g_state.debug_level = -1;
     g_state.max_threads = DEFAULT_MAXTHREADS;

@@ -1,6 +1,7 @@
 0.6
   - Added CLIENT and SERVER variables to VirusAction script environment.
   - Even better logging for network errors.
+  - Print out proxsmtp version in debug logs
 
 0.5
   - Added sample scripts.

@@ -551,13 +551,14 @@ static void* thread_main(void* arg)
 
     memset(&ctx, 0, sizeof(ctx));
 
-    /* Assign a unique id to the connection */
-    ctx.id = g_unique_id++;
-
     ctx.server = -1;
     ctx.clam = -1;
 
     plock();
+        /* Assign a unique id to the connection */
+        ctx.id = g_unique_id++;
+
+        /* Get the client socket */
         ctx.client = thread->fd;
     punlock();
 

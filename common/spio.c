@@ -175,7 +175,6 @@ int clio_select(clamsmtp_context_t* ctx, clio_t** io)
 int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
 {
     int l, x;
-    int bufused;
     char* t;
     unsigned char* p;
 

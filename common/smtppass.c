@@ -564,41 +564,55 @@ static void* thread_main(void* arg)
     struct sockaddr_any* outaddr;
     const char* outname;
     char buf[MAXPATHLEN];
-    clamsmtp_context_t ctx;
+    clamsmtp_context_t* ctx = NULL;
     int processing = 0;
     int ret = 0;
+    int fd;
 
     ASSERT(thread);
 
     siginterrupt(SIGINT, 1);
     siginterrupt(SIGTERM, 1);
 
-    memset(&ctx, 0, sizeof(ctx));
+    plock();
+        /* Get the client socket */
+        fd = thread->fd;
+    punlock();
 
-    clio_init(&(ctx.server), "SERVER");
-    clio_init(&(ctx.client), "CLIENT");
-    clio_init(&(ctx.clam),   "CLAM  ");
+    ctx = (clamsmtp_context_t*)calloc(1, sizeof(clamsmtp_context_t));
+    if(!ctx)
+    {
+        /* Special case. We don't have a context so clean up descriptor */
+        close(fd);
+
+        messagex(NULL, LOG_CRIT, "out of memory");
+        RETURN(-1);
+    }
+
+    memset(ctx, 0, sizeof(*ctx));
+
+    clio_init(&(ctx->server), "SERVER");
+    clio_init(&(ctx->client), "CLIENT");
+    clio_init(&(ctx->clam),   "CLAM  ");
 
     plock();
         /* Assign a unique id to the connection */
-        ctx.id = g_unique_id++;
-
-        /* Get the client socket */
-        ctx.client.fd = thread->fd;
+        ctx->id = g_unique_id++;
     punlock();
 
-    ASSERT(ctx.client.fd != -1);
-    messagex(&ctx, LOG_DEBUG, "processing %d on thread %x", ctx.client.fd, (int)pthread_self());
+    ctx->client.fd = fd;
+    ASSERT(ctx->client.fd != -1);
+    messagex(ctx, LOG_DEBUG, "processing %d on thread %x", ctx->client.fd, (int)pthread_self());
 
     memset(&addr, 0, sizeof(addr));
     SANY_LEN(addr) = sizeof(addr);
 
     /* Get the peer name */
-    if(getpeername(ctx.client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1 ||
+    if(getpeername(ctx->client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1 ||
        sock_any_ntop(&addr, buf, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
-        message(&ctx, LOG_WARNING, "couldn't get peer address");
+        message(ctx, LOG_WARNING, "couldn't get peer address");
     else
-        messagex(&ctx, LOG_INFO, "accepted connection from: %s", buf);
+        messagex(ctx, LOG_INFO, "accepted connection from: %s", buf);
 
 
     /* Create the server connection address */
@@ -621,28 +635,31 @@ static void* thread_main(void* arg)
 
 
     /* Connect to the server */
-    if(clio_connect(&ctx, &(ctx.server), outaddr, outname) == -1)
+    if(clio_connect(ctx, &(ctx->server), outaddr, outname) == -1)
         RETURN(-1);
 
     /* ... and to the AV daemon */
-    if(connect_clam(&ctx) == -1)
+    if(connect_clam(ctx) == -1)
         RETURN(-1);
 
 
     /* call the processor */
     processing = 1;
-    ret = smtp_passthru(&ctx);
+    ret = smtp_passthru(ctx);
 
 cleanup:
 
-    disconnect_clam(&ctx);
+    if(ctx)
+    {
+        disconnect_clam(ctx);
 
-    /* Let the client know about fatal errors */
-    if(!processing && ret == -1 && clio_valid(&(ctx.client)))
-       clio_write_data(&ctx, &(ctx.client), SMTP_STARTFAILED);
+        /* Let the client know about fatal errors */
+        if(!processing && ret == -1 && clio_valid(&(ctx->client)))
+           clio_write_data(ctx, &(ctx->client), SMTP_STARTFAILED);
 
-    clio_disconnect(&ctx, &(ctx.client));
-    clio_disconnect(&ctx, &(ctx.server));
+        clio_disconnect(ctx, &(ctx->client));
+        clio_disconnect(ctx, &(ctx->server));
+    }
 
     /* mark this as done */
     plock();

@@ -16,6 +16,26 @@
 # See proxsmtpd.conf(5) for configuration details
 #
 
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#   WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+#
+#  By using variables passed in from clamsmtpd in file
+#  manipulation commands without escaping their contents
+#  you are opening yourself up to REMOTE COMPROMISE. You
+#  have been warned. Do NOT do the following unless you
+#  want to be screwed big time:
+#
+#  mv $EMAIL "$SENDER.eml"
+#
+#  An attacker can use the above command to compromise your
+#  computer. The only variable that is guaranteed safe in
+#  this regard is $EMAIL.
+#
+#  The following script does not escape its variables
+#  because it only uses them in safe ways.
+#
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 # Pipe the email through this command
 formail -i "Subject: Changed subject from $SENDER ..."
 

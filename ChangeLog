@@ -1,5 +1,6 @@
-0.7  ?????
+1.0  ?????
 
+  - Added big scary warnings to the sample scripts about escaping variables.
   - Documentation fixes [Olivier Beyssac]
 
 0.6  [2004-10-30]

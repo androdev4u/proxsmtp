@@ -93,7 +93,7 @@ clamsmtp_context_t;
 #define clio_valid(io)      ((io)->fd != -1)
 
 void clio_init(clio_t* io, const char* name);
-int clio_connect(clamsmtp_context_t* ctx, clio_t* io, struct sockaddr_any* sany, const char* addrname);
+int clio_connect(clamsmtp_context_t* ctx, clio_t* io, const struct sockaddr_any* sany, const char* addrname);
 void clio_disconnect(clamsmtp_context_t* ctx, clio_t* io);
 int clio_select(clamsmtp_context_t* ctx, clio_t** io);
 int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int trim);

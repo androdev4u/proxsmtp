@@ -302,7 +302,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
   return -1;
 }
 
-int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen, int opts)
+int sock_any_ntop(const struct sockaddr_any* any, char* addr, size_t addrlen, int opts)
 {
   int len = 0;
   int port = 0;
@@ -354,7 +354,7 @@ int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen, int opts
   return 0;
 }
 
-int sock_any_cmp(struct sockaddr_any* a1, struct sockaddr_any* a2, int opts)
+int sock_any_cmp(const struct sockaddr_any* a1, const struct sockaddr_any* a2, int opts)
 {
     if(a1->s.a.sa_family != a2->s.a.sa_family)
         return -1;

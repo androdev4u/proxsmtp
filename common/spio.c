@@ -105,7 +105,7 @@ void clio_init(clio_t* io, const char* name)
     io->fd = -1;
 }
 
-int clio_connect(clamsmtp_context_t* ctx, clio_t* io, struct sockaddr_any* sany,
+int clio_connect(clamsmtp_context_t* ctx, clio_t* io, const struct sockaddr_any* sany,
                  const char* addrname)
 {
     int ret = 0;
@@ -183,7 +183,7 @@ int clio_select(clamsmtp_context_t* ctx, clio_t** io)
 
     /* Select on the above */
 
-    switch(select(FD_SETSIZE, &mask, NULL, NULL, &(g_state->timeout)))
+    switch(select(FD_SETSIZE, &mask, NULL, NULL, (struct timeval*)&(g_state->timeout)))
     {
     case 0:
         messagex(ctx, LOG_ERR, "network operation timed out");

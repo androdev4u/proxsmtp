@@ -80,11 +80,11 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts);
 #define SANY_OPT_DEFINET6       0x00200000
 #endif
 
-int sock_any_ntop(struct sockaddr_any* any, char* addr, size_t addrlen, int opts);
+int sock_any_ntop(const struct sockaddr_any* any, char* addr, size_t addrlen, int opts);
 
 /* Don't print or compare the port */
 #define SANY_OPT_NOPORT         0x01000000
 
-int sock_any_cmp(struct sockaddr_any* a1, struct sockaddr_any* a2, int opts);
+int sock_any_cmp(const struct sockaddr_any* a1, const struct sockaddr_any* a2, int opts);
 
 #endif /* __SOCK_ANY_H__ */

@@ -1394,7 +1394,7 @@ void sp_setup_forked(spctx_t* ctx, int file)
     if(file && ctx->cachename[0])
         setenv("EMAIL", ctx->cachename, 1);
 
-    setenv("TMP", g_state.directory, 1);
+    setenv("TMPDIR", g_state.directory, 1);
 }
 
 

@@ -47,6 +47,7 @@ typedef struct spstate
     int debug_level;                /* The level to print stuff to console */
     int max_threads;                /* Maximum number of threads to process at once */
     struct timeval timeout;         /* Timeout for communication */
+    int keepalives;                 /* Send server keep alives at this interval */
     int transparent;                /* Transparent proxying */
     const char* directory;          /* The temp directory */
     const char* user;               /* User to run as */

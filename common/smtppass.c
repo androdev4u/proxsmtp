@@ -127,9 +127,6 @@ spthread_t;
 
 #define LINE_TOO_LONG(l)      ((l) >= (SP_LINE_LENGTH - 2))
 
-/* The amount interval at which to send NOOPS to server */
-#define INTERACTION_DELTA   10
-
 /* -----------------------------------------------------------------------
  *  CONFIGURATION OPTIONS
  *
@@ -146,6 +143,7 @@ spthread_t;
 #define CFG_LISTENADDR      "Listen"
 #define CFG_TRANSPARENT     "TransparentProxy"
 #define CFG_DIRECTORY       "TempDirectory"
+#define CFG_KEEPALIVES      "KeepAlives"
 #define CFG_USER            "User"
 #define CFG_PIDFILE         "PidFile"
 
@@ -157,6 +155,7 @@ spthread_t;
 #define DEFAULT_PORT    10025
 #define DEFAULT_MAXTHREADS  64
 #define DEFAULT_TIMEOUT   180
+#define DEFAULT_KEEPALIVES 0
 
 /* -----------------------------------------------------------------------
  *  GLOBALS
@@ -206,6 +205,7 @@ void sp_init(const char* name)
     g_state.debug_level = -1;
     g_state.max_threads = DEFAULT_MAXTHREADS;
     g_state.timeout.tv_sec = DEFAULT_TIMEOUT;
+    g_state.keepalives = DEFAULT_KEEPALIVES;
     g_state.directory = _PATH_TMP;
     g_state.name = name;
 
@@ -1138,13 +1138,16 @@ int sp_read_data(spctx_t* ctx, const char** data)
         return -1;
     };
 
-    /*
-     * During this time we're just reading from the client. If we haven't
-     * had any interaction with the server recently then send something
-     * to let it know we're still around.
-     */
-    if((ctx->server.last_action + INTERACTION_DELTA) < time(NULL))
-        do_server_noop(ctx);
+    if(g_state.keepalives > 0)
+    {
+        /*
+         * During this time we're just reading from the client. If we haven't
+         * had any interaction with the server recently then send something
+         * to let it know we're still around.
+         */
+        if((ctx->server.last_action + g_state.keepalives) < time(NULL))
+            do_server_noop(ctx);
+    }
 
     if(ctx->_crlf && strcmp(ctx->client.line, DATA_END_SIG) == 0)
         return 0;
@@ -1584,6 +1587,14 @@ int sp_parse_option(const char* name, const char* value)
         g_state.timeout.tv_sec = strtol(value, &t, 10);
         if(*t || g_state.timeout.tv_sec <= 0)
             errx(2, "invalid setting: " CFG_TIMEOUT);
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_KEEPALIVES, name) == 0)
+    {
+        g_state.keepalives = strtol(value, &t, 10);
+        if(*t || g_state.keepalives < 0)
+            errx(2, "invalid setting: " CFG_KEEPALIVES);
         ret = 1;
     }
 

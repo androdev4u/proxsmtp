@@ -1,3 +1,40 @@
+/*
+ * Copyright (c) 2004, Nate Nielsen
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ *     * Redistributions of source code must retain the above
+ *       copyright notice, this list of conditions and the
+ *       following disclaimer.
+ *     * Redistributions in binary form must reproduce the
+ *       above copyright notice, this list of conditions and
+ *       the following disclaimer in the documentation and/or
+ *       other materials provided with the distribution.
+ *     * The names of contributors to this software may not be
+ *       used to endorse or promote products derived from this
+ *       software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+ * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+ * DAMAGE.
+ *
+ *
+ * CONTRIBUTORS
+ *  Nate Nielsen <nielsen@memberwebs.com>
+ *
+ */
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -46,10 +83,13 @@ clamsmtp_thread_t;
 #define SMTP_DATAVIRUS      "550 Virus Detected; Content Rejected\r\n"
 #define SMTP_DATAINTERMED   "354 Start mail input; end with <CRLF>.<CRLF>\r\n"
 #define SMTP_FAILED         "451 Local Error\r\n"
+#define SMTP_NOTSUPP        "502 Command not implemented\r\n"
+#define SMTP_DATAVIRUSOK    "250 Virus Detected; Discarded Email\r\n"
 
 #define SMTP_DATA           "DATA\r\n"
 #define SMTP_DELIMS         "\r\n\t :"
 
+#define EHLO_CMD            "EHLO"
 #define FROM_CMD            "MAIL FROM"
 #define TO_CMD              "RCPT TO"
 #define DATA_CMD            "DATA"
@@ -98,6 +138,7 @@ const char* g_clamname = DEFAULT_CLAMAV;
 const char* g_header = DEFAULT_HEADER;      /* The header to add to email */
 const char* g_directory = _PATH_TMP;        /* The directory for temp files */
 unsigned int g_unique_id = 0x00001000;      /* For connection ids */
+int g_bounce = 0;                           /* Send back a reject line */
 
 /* For main loop and signal handlers */
 int g_quit = 0;
@@ -113,7 +154,7 @@ pthread_mutexattr_t g_mutexattr;
 
 static usage();
 static void on_quit(int signal);
-static void write_pid(const char* pid);
+static void pid_file(const char* pid, int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
 static int smtp_passthru(clamsmtp_context_t* ctx);
@@ -145,10 +186,15 @@ int main(int argc, char* argv[])
     char* t;
 
     /* Parse the arguments nicely */
-    while((ch = getopt(argc, argv, "c:d:D:h:l:m:p:t:")) != -1)
+    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:t:")) != -1)
     {
         switch(ch)
         {
+        /* Actively reject messages */
+        case 'b':
+            g_bounce = 1;
+            break;
+
         /* Change the CLAM socket */
         case 'c':
             g_clamname = optarg;
@@ -226,6 +272,22 @@ int main(int argc, char* argv[])
     if(sock_any_pton(g_clamname, &g_clamaddr, 0) == -1)
         errx(1, "invalid clam socket name: %s", g_clamname);
 
+    if(daemonize)
+    {
+        /* Fork a daemon nicely here */
+        if(daemon(0, 0) == -1)
+        {
+            message(NULL, LOG_ERR, "couldn't run as daemon");
+            exit(1);
+        }
+
+        messagex(NULL, LOG_DEBUG, "running as a daemon");
+        g_daemonized = 1;
+
+        /* Open the system log */
+        openlog("clamsmtpd", 0, LOG_MAIL);
+    }
+
     /* Create the socket */
     sock = socket(SANY_TYPE(addr), SOCK_STREAM, 0);
     if(sock < 0)
@@ -246,25 +308,6 @@ int main(int argc, char* argv[])
 
     messagex(NULL, LOG_DEBUG, "created socket: %s", listensock);
 
-    if(daemonize)
-    {
-        /* Fork a daemon nicely here */
-        if(daemon(0, 0) == -1)
-        {
-            message(NULL, LOG_ERR, "couldn't run as daemon");
-            exit(1);
-        }
-
-        messagex(NULL, LOG_DEBUG, "running as a daemon");
-        g_daemonized = 1;
-
-        /* Open the system log */
-        openlog("clamsmtp", 0, LOG_MAIL);
-    }
-
-    if(pidfile)
-        write_pid(pidfile);
-
     /* Handle some signals */
     signal(SIGPIPE, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
@@ -274,9 +317,15 @@ int main(int argc, char* argv[])
     siginterrupt(SIGINT, 1);
     siginterrupt(SIGTERM, 1);
 
+    if(pidfile)
+        pid_file(pidfile, 1);
+
     messagex(NULL, LOG_DEBUG, "accepting connections");
 
     connection_loop(sock);
+
+    if(pidfile)
+        pid_file(pidfile, 0);
 
     messagex(NULL, LOG_DEBUG, "stopped");
 
@@ -377,7 +426,7 @@ static void connection_loop(int sock)
         }
     }
 
-    messagex(NULL, LOG_INFO, "waiting for threads to quit");
+    messagex(NULL, LOG_DEBUG, "waiting for threads to quit");
 
     /* Quit all threads here */
     for(i = 0; i < g_maxthreads; i++)
@@ -406,26 +455,37 @@ static void on_quit(int signal)
 
 static int usage()
 {
-    fprintf(stderr, "clamsmtp [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header]"
+    fprintf(stderr, "clamsmtpd [-b] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
             "[-l listenaddr] [-m maxconn] [-p pidfile] [-t timeout] serveraddr\n");
-    return 2;
+    exit(2);
 }
 
-static void write_pid(const char* pidfile)
+static void pid_file(const char* pidfile, int write)
 {
-    FILE* f = fopen(pidfile, "w");
-    if(f == NULL)
+    if(write)
     {
-        message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
+        FILE* f = fopen(pidfile, "w");
+        if(f == NULL)
+        {
+            message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
+        }
+        else
+        {
+            fprintf(f, "%d\n", (int)getpid());
+
+            if(ferror(f))
+                message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
+
+            fclose(f);
+        }
+
+        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
     }
+
     else
     {
-        fprintf(f, "%d\n", (int)getpid());
-
-        if(ferror(f))
-            message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
-
-        fclose(f);
+        unlink(pidfile);
+        messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
     }
 }
 
@@ -456,10 +516,13 @@ static void* thread_main(void* arg)
     /* Assign a unique id to the connection */
     ctx.id = g_unique_id++;
 
+    memset(&addr, 0, sizeof(addr));
+    SANY_LEN(addr) = sizeof(addr);
+
     /* Get the peer name */
     if(getpeername(ctx.client, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1 ||
        sock_any_ntop(&addr, peername, MAXPATHLEN) == -1)
-        messagex(&ctx, LOG_WARNING, "couldn't get peer address");
+        message(&ctx, LOG_WARNING, "couldn't get peer address");
     else
         messagex(&ctx, LOG_INFO, "accepted connection from: %s", peername);
 
@@ -536,53 +599,65 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             /* We don't let clients send really long lines */
             if(LINE_TOO_LONG(ctx))
             {
-                if(write_data(ctx, &(ctx->server), SMTP_TOOLONG) == -1)
+                if(write_data(ctx, &(ctx->client), SMTP_TOOLONG) == -1)
                     RETURN(-1);
+
+                continue;
             }
 
-            else
+            /* Handle the DATA section via our AV checker */
+            if(is_first_word(ctx->line, DATA_CMD, KL(DATA_CMD)))
             {
-                if(is_first_word(ctx->line, DATA_CMD, KL(DATA_CMD)))
-                {
-                    /* Send back the intermediate response to the client */
-                    if(write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
-                        RETURN(-1);
+                /* Send back the intermediate response to the client */
+                if(write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
+                    RETURN(-1);
 
-                    /*
-                     * Now go into avcheck mode. This also handles the eventual
-                     * sending of the data to the server, making the av check
-                     * transparent
-                     */
-                    if(avcheck_data(ctx, logline) == -1)
-                        RETURN(-1);
+                /*
+                 * Now go into avcheck mode. This also handles the eventual
+                 * sending of the data to the server, making the av check
+                 * transparent
+                 */
+                if(avcheck_data(ctx, logline) == -1)
+                    RETURN(-1);
 
-                    /* Print the log out for this email */
-                    messagex(ctx, LOG_INFO, "%s", logline);
+                /* Print the log out for this email */
+                messagex(ctx, LOG_INFO, "%s", logline);
 
-                    /* Reset log line */
-                    logline[0] = 0;
-                }
-
-                /* All other commands just get passed through to server */
-                else
-                {
-
-                    /* Append recipients to log line */
-                    if((r = check_first_word(ctx->line, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
-                        add_to_logline(logline, "from=", ctx->line + r);
-
-                    /* Append sender to log line */
-                    else if((r = check_first_word(ctx->line, TO_CMD, KL(TO_CMD), SMTP_DELIMS)) > 0)
-                        add_to_logline(logline, "to=", ctx->line + r);
-
-                    /* Reset log line */
-                    else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)))
-                        logline[0] = 0;
-
-                    if(write_data(ctx, &(ctx->server), ctx->line) == -1)
-                        RETURN(-1);
-                }
+                /* Reset log line */
+                logline[0] = 0;
+                continue;
             }
+
+            /*
+             * We don't support EHLO (ESMTP) because pipelining
+             * and other nuances aren't implemented here. In order
+             * to keep things reliable we just disable it all.
+             */
+            if(is_first_word(ctx->line, EHLO_CMD, KL(EHLO_CMD)))
+            {
+                messagex(ctx, LOG_DEBUG, "ESMTP not implemented");
+
+                if(write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
+                    RETURN(-1);
+
+                continue;
+            }
+
+            /* Append recipients to log line */
+            else if((r = check_first_word(ctx->line, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
+                add_to_logline(logline, "from=", ctx->line + r);
+
+            /* Append sender to log line */
+            else if((r = check_first_word(ctx->line, TO_CMD, KL(TO_CMD), SMTP_DELIMS)) > 0)
+                add_to_logline(logline, "to=", ctx->line + r);
+
+            /* Reset log line */
+            else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)))
+                logline[0] = 0;
+
+            /* All other commands just get passed through to server */
+            if(write_data(ctx, &(ctx->server), ctx->line) == -1)
+                RETURN(-1);
 
             continue;
         }
@@ -721,7 +796,7 @@ static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* l
 {
     int len;
 
-    ASSERT(LINE_LENGTH < MAXPATHLEN + 32);
+    ASSERT(LINE_LENGTH > MAXPATHLEN + 32);
 
     strcpy(ctx->line, CLAM_SCAN);
     strcat(ctx->line, tempname);
@@ -813,12 +888,14 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
         break;
 
     /*
-     * A virus was found, just send back a simple message to the client.
+     * A virus was found, normally we just drop the email. But if
+     * requested we can send a simple message back to our client.
      * The server doesn't know data was ever sent, and the client can
      * choose to reset the connection to reuse it if it wants.
      */
     case 1:
-        if(write_data(ctx, &(ctx->client), SMTP_DATAVIRUS) == -1)
+        if(write_data(ctx, &(ctx->client),
+                   g_bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
             RETURN(-1);
         break;
 
@@ -1005,7 +1082,8 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
              */
             if(is_blank_line(ctx->line))
             {
-                if(write_data_raw(ctx, &(ctx->server), g_header, strlen(g_header)) == -1)
+                if(write_data_raw(ctx, &(ctx->server), (char*)g_header,
+                                  strlen(g_header)) == -1)
                     RETURN(-1);
             }
 
@@ -1083,7 +1161,7 @@ static void read_junk(clamsmtp_context_t* ctx, int fd)
 
         if(!said && *t)
         {
-            messagex(ctx, LOG_WARNING, "received junk data from daemon");
+            messagex(ctx, LOG_DEBUG, "received junk data from daemon");
             said = 1;
         }
     }

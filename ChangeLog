@@ -1,3 +1,7 @@
+0.7  ?????
+
+  - Documentation fixes [Olivier Beyssac]
+
 0.6  [2004-10-30]
   - Added CLIENT and SERVER variables to VirusAction script environment.
   - Even better logging for network errors and filter warnings.

@@ -50,14 +50,14 @@ or
 .Pa /etc/
 directories. If 
 .Xr proxsmtpd 8
-does not find it's configuration file it'll print a warning when it starts up along
+does not find its configuration file it'll print a warning when it starts up along
 with the location it's expecting to find it in. You can also specify a different 
 location for a config file by passing the 
 .Fl f
 argument to 
 .Xr proxsmtpd 8
 .Pp
-The settings are specified one per line. The setting names comes first, followed
+The settings are specified one per line. The setting names come first, followed
 by a colon and then the value. Comments start with the '#' character on a line 
 of their own. Whitespace is ignored at the beginning of line, end of line and 
 around the colons. 
@@ -106,7 +106,7 @@ The address of the SMTP server to send email to once it's been scanned. See
 syntax of addreses below. 
 [ Required ]
 .It Ar TempDirectory
-The directory to write temp files too. 
+The directory to write temp files to. 
 [ Default:
 .Pa /tmp
 ]

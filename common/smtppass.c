@@ -33,7 +33,7 @@
  *
  * CONTRIBUTORS
  *  Nate Nielsen <nielsen@memberwebs.com>
- *
+ *  Yamamoto Takao <takao@oakat.org>
  */
 
 #include <sys/time.h>
@@ -87,8 +87,10 @@ clamsmtp_thread_t;
 #define SMTP_DATAVIRUSOK    "250 Virus Detected; Discarded Email\r\n"
 
 #define SMTP_DATA           "DATA\r\n"
+#define SMTP_HELO           "HELO "
 #define SMTP_DELIMS         "\r\n\t :"
 
+#define HELO_CMD            "HELO"
 #define EHLO_CMD            "EHLO"
 #define FROM_CMD            "MAIL FROM"
 #define TO_CMD              "RCPT TO"
@@ -676,6 +678,28 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 continue;
             }
 
+            /*
+             * Because many mail servers check for mail loops, we
+             * intercept HELO commands and send one withour own
+             * host name.
+             */
+            else if(is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
+            {
+                strlcat(ctx->line, SMTP_HELO, LINE_LENGTH);
+
+                r = KL(SMTP_HELO);
+
+                if(gethostname(ctx->line + r, LINE_LENGTH - r) == -1)
+                    strlcat(ctx->line, "clamsmtp", LINE_LENGTH);
+
+                ctx->line[LINE_LENGTH - 1] = 0;
+
+                if(write_data(ctx, &(ctx->server), ctx->line) == -1)
+                    RETURN(-1);
+
+                continue;
+            }
+
             /* Append recipients to log line */
             else if((r = check_first_word(ctx->line, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
                 add_to_logline(logline, "from=", ctx->line + r);
@@ -1110,9 +1134,9 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
                 if(write_data_raw(ctx, &(ctx->server), (char*)g_header,
                                   strlen(g_header)) == -1)
                     RETURN(-1);
-            }
 
-            header = 1;
+                header = 1;
+            }
         }
 
         if(write_data_raw(ctx, &(ctx->server), ctx->line, strlen(ctx->line)) == -1)

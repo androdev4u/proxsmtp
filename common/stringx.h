@@ -50,6 +50,10 @@ int is_first_word(const char* line, const char* word, int len);
 int is_last_word(const char* line, const char* word, int len);
 int is_blank_line(const char* line);
 
+char* trim_start(const char* data);
+char* trim_end(char* data);
+char* trim_space(char* data);
+
 void plock();
 void punlock();
 

@@ -91,7 +91,13 @@ clamsmtp_thread_t;
 
 #define SMTP_DATA           "DATA" CRLF
 #define SMTP_BANNER         "220 clamsmtp" CRLF
-#define SMTP_DELIMS         "\r\n\t :"
+#define SMTP_DELIMS         "\r\n\t :-"
+
+#define ESMTP_PIPELINE      "PIPELINING"
+#define ESMTP_TLS           "STARTTLS"
+#define ESMTP_CHUNK         "CHUNKING"
+#define ESMTP_BINARY        "BINARYMIME"
+#define ESMTP_CHECK         "CHECKPOINT"
 
 #define HELO_CMD            "HELO"
 #define EHLO_CMD            "EHLO"
@@ -99,6 +105,8 @@ clamsmtp_thread_t;
 #define TO_CMD              "RCPT TO"
 #define DATA_CMD            "DATA"
 #define RSET_CMD            "RSET"
+#define STARTTLS_CMD        "STARTTLS"
+#define BDAT_CMD            "BDAT"
 
 #define DATA_END_SIG        CRLF "." CRLF
 
@@ -668,6 +676,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
     char logline[LINE_LENGTH];
     int r, ret = 0;
     int first_rsp = 1;
+    int filter_ehlo = 0;
 	fd_set mask;
     int neterror = 0;
 
@@ -738,13 +747,24 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             }
 
             /*
-             * We don't support EHLO (ESMTP) because pipelining
-             * and other nuances aren't implemented here. In order
-             * to keep things reliable we just disable it all.
+             * We filter out features that we can't support in
+             * the EHLO response (ESMTP). See below
              */
             else if(is_first_word(ctx->line, EHLO_CMD, KL(EHLO_CMD)))
             {
-                messagex(ctx, LOG_DEBUG, "ESMTP not implemented");
+                messagex(ctx, LOG_DEBUG, "filtering EHLO response");
+                filter_ehlo = 1;
+            }
+
+            /*
+             * We don't like these commands. Filter them out. We should have
+             * filtered out their service extensions earlier in the EHLO response.
+             * This is just for errant clients.
+             */
+            else if(is_first_word(ctx->line, STARTTLS_CMD, KL(STARTTLS_CMD)) ||
+                    is_first_word(ctx->line, BDAT_CMD, KL(BDAT_CMD)))
+            {
+                messagex(ctx, LOG_DEBUG, "ESMTP feature not supported");
 
                 if(write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
                     RETURN(-1);
@@ -812,6 +832,32 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 }
             }
 
+            /*
+             * Filter out any EHLO responses that we can't or don't want
+             * to support. For example pipelining or TLS.
+             */
+            if(filter_ehlo)
+            {
+                if((r = check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_DELIMS)) > 0)
+                {
+                    char* p = ctx->line + r;
+                    if(is_first_word(p, ESMTP_PIPELINE, KL(ESMTP_PIPELINE)) ||
+                       is_first_word(p, ESMTP_TLS, KL(ESMTP_TLS)) ||
+                       is_first_word(p, ESMTP_CHUNK, KL(ESMTP_CHUNK)) ||
+                       is_first_word(p, ESMTP_BINARY, KL(ESMTP_BINARY)) ||
+                       is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)))
+                    {
+                        messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", p);
+                        continue;
+                    }
+                }
+                else
+                {
+                    filter_ehlo = 0;
+                    messagex(ctx, LOG_DEBUG, "done filtering ESMTP response");
+                }
+            }
+
             if(write_data(ctx, &(ctx->client), ctx->line) == -1)
                 RETURN(-1);
 
@@ -844,15 +890,12 @@ static void add_to_logline(char* logline, char* prefix, char* line)
     strlcat(logline, prefix, l);
 
     /* Skip initial white space */
-    while(*line && isspace(*line))
-        *line++;
+    line = trim_start(line);
 
     strlcat(logline, line, l);
-    t = logline + strlen(logline);
 
     /* Skip later white space */
-    while(t > logline && isspace(*(t - 1)))
-        *(--t) = 0;
+    trim_end(logline);
 }
 
 static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
@@ -1380,10 +1423,7 @@ static void read_junk(clamsmtp_context_t* ctx, int fd)
             break;
 
         buf[l] = 0;
-        t = buf;
-
-        while(*t && isspace(*t))
-            t++;
+        t = trim_start(buf);
 
         if(!said && *t)
         {

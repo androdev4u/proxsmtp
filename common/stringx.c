@@ -261,6 +261,32 @@ int is_blank_line(const char* line)
     return *line == 0;
 }
 
+char* trim_start(const char* data)
+{
+    while(*data && isspace(*data))
+        ++data;
+    return (char*)data;
+}
+
+char* trim_end(char* data)
+{
+    char* t = data + strlen(data);
+
+    while(t > data && isspace(*(t - 1)))
+    {
+        t--;
+        *t = 0;
+    }
+
+    return data;
+}
+
+char* trim_space(char* data)
+{
+    data = (char*)trim_start(data);
+    return trim_end(data);
+}
+
 /* -----------------------------------------------------------------------
  * Locking
  */

@@ -90,7 +90,7 @@ clamsmtp_thread_t;
 #define SMTP_OK             "250 Ok" CRLF
 
 #define SMTP_DATA           "DATA" CRLF
-#define SMTP_HELO           "HELO "
+#define SMTP_START          "220 "
 #define SMTP_DELIMS         "\r\n\t :"
 
 #define HELO_CMD            "HELO"
@@ -104,6 +104,7 @@ clamsmtp_thread_t;
 
 #define DATA_RSP            "354"
 #define OK_RSP              "250"
+#define START_RSP           "220"
 
 #define CLAM_OK             "OK"
 #define CLAM_ERROR          "ERROR"
@@ -574,6 +575,10 @@ cleanup:
 
     disconnect_clam(&ctx);
 
+    /* Let the client know about fatal errors */
+    if(ret == -1 && ctx.client != -1)
+       write_data(&ctx, &(ctx.client), SMTP_STARTFAILED);
+
     if(ctx.client != -1)
     {
         shutdown(ctx.client, SHUT_RDWR);
@@ -599,14 +604,10 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
     char logline[LINE_LENGTH];
     int processing = 0;
     int r, ret = 0;
-    int helo = 0;
+    int first_rsp = 1;
 	fd_set mask;
 
     ASSERT(ctx->clam != -1 && ctx->server != -1);
-
-    /* This changes the error code sent to the client when an
-     * error occurs. See cleanup below */
-    processing = 1;
     logline[0] = 0;
 
     for(;;)
@@ -686,35 +687,6 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 continue;
             }
 
-            /*
-             * Because many mail servers check for mail loops, we
-             * intercept HELO commands and send one withour own
-             * host name.
-             */
-            else if(is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
-            {
-                messagex(ctx, LOG_DEBUG, "intercepting HELO");
-
-                strlcpy(ctx->line, SMTP_HELO, LINE_LENGTH);
-
-                r = KL(SMTP_HELO);
-
-                if(gethostname(ctx->line + r, LINE_LENGTH - r) == -1)
-                    strlcat(ctx->line, "clamsmtp", LINE_LENGTH);
-
-                strlcat(ctx->line, CRLF, LINE_LENGTH);
-                ctx->line[LINE_LENGTH - 1] = 0;
-
-                if(write_data(ctx, &(ctx->server), ctx->line) == -1)
-                    RETURN(-1);
-
-                /* The 250 response from the server also needs changing */
-                helo = 1;
-
-                /* Command handled */
-                continue;
-            }
-
             /* Append recipients to log line */
             else if((r = check_first_word(ctx->line, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
                 add_to_logline(logline, "from=", ctx->line + r);
@@ -747,17 +719,29 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
 
             /*
-             * After we've seen a HELO we need to edit the response that
-             * gets sent back to the client to prevent the server from
-             * thinking we're in a wierd loop.
+             * We intercept the first response we get from the server.
+             * This allows us to change header so that it doesn't look
+             * to the client server that we're in a wierd loop.
              */
-            if(helo)
+            if(first_rsp)
             {
-                helo = 0;
+                first_rsp = 0;
 
-                if(is_first_word(ctx->line, OK_RSP, KL(OK_RSP)))
+                if(is_first_word(ctx->line, START_RSP, KL(START_RSP)))
                 {
-                    if(write_data(ctx, &(ctx->client), SMTP_OK) == -1)
+                    messagex(ctx, LOG_DEBUG, "intercepting initial response");
+
+                    strlcpy(ctx->line, SMTP_START, LINE_LENGTH);
+
+                    r = KL(SMTP_START);
+
+                    if(gethostname(ctx->line + r, LINE_LENGTH - r) == -1)
+                        strlcat(ctx->line, "clamsmtp", LINE_LENGTH);
+
+                    strlcat(ctx->line, CRLF, LINE_LENGTH);
+                    ctx->line[LINE_LENGTH - 1] = 0;
+
+                    if(write_data(ctx, &(ctx->client), ctx->line) == -1)
                         RETURN(-1);
 
                     /* Command handled */

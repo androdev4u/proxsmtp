@@ -117,6 +117,18 @@ void spio_attach(spctx_t* ctx, spio_t* io, int fd, struct sockaddr_any* peer)
 
     io->fd = fd;
 
+    /* Get the address on which we accepted the connection */
+    memset(&locaddr, 0, sizeof(locaddr));
+    SANY_LEN(locaddr) = sizeof(locaddr);
+
+    if(getsockname(fd, &SANY_ADDR(locaddr), &SANY_LEN(locaddr)) == -1 ||
+	   sock_any_ntop(&locaddr, io->localname, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
+    {
+		if (errno != EAFNOSUPPORT)
+	        sp_message(ctx, LOG_WARNING, "%s: couldn't get socket address", GET_IO_NAME(io));
+        strlcpy(io->localname, "UNKNOWN", MAXPATHLEN);
+    }
+
     /* If the caller doesn't want the peer then use our own */
     if (peer == NULL)
         peer = &peeraddr;
@@ -127,19 +139,9 @@ void spio_attach(spctx_t* ctx, spio_t* io, int fd, struct sockaddr_any* peer)
     if(getpeername(fd, &SANY_ADDR(*peer), &SANY_LEN(*peer)) == -1 ||
        sock_any_ntop(peer, io->peername, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
     {
-        sp_message(ctx, LOG_WARNING, "%s: couldn't get peer address", GET_IO_NAME(io));
+		if (errno != EAFNOSUPPORT)
+	        sp_message(ctx, LOG_WARNING, "%s: couldn't get peer address", GET_IO_NAME(io));
         strlcpy(io->peername, "UNKNOWN", MAXPATHLEN);
-    }
-
-    /* Get the address on which we accepted the connection */
-    memset(&locaddr, 0, sizeof(locaddr));
-    SANY_LEN(locaddr) = sizeof(locaddr);
-
-    if(getsockname(fd, &SANY_ADDR(locaddr), &SANY_LEN(locaddr)) == -1 ||
-	   sock_any_ntop(&locaddr, io->localname, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
-    {
-        sp_message(ctx, LOG_WARNING, "%s: couldn't get socket address", GET_IO_NAME(io));
-        strlcpy(io->localname, "UNKNOWN", MAXPATHLEN);
     }
 
     /* As a double check */

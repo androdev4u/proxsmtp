@@ -1312,32 +1312,35 @@ cleanup:
 
 int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 {
-    char* t;
+    char* t = NULL;
     int len, x;
+    int pref = 0;
+    int crlf = 0;
 
     if(smtp_status == NULL)
-    {
         smtp_status = SMTP_FAILED;
-    }
 
-    else
+    x = strtol(smtp_status, &t, 10);
+    len = strlen(smtp_status);
+
+    /* We need 3 digits and CRLF at the end for a premade SMTP message */
+    if(x == 0 || t != smtp_status + 3)
+        pref = 1;
+
+    /* We need a CRLF at the end */
+    if(strcmp(smtp_status + (len - KL(CRLF)), CRLF) != 0)
+        crlf = 1;
+
+    if(pref || crlf)
     {
-        len = strlen(smtp_status);
+        x = (x > 256 ? 256 : x) + KL(SMTP_REJPREFIX) + KL(CRLF) + 1;
+        t = (char*)alloca(x + 1);
 
-        /* We need 3 digits and CRLF at the end for a premade SMTP message */
-        if(strtol(smtp_status, &t, 10) == 0 || t != smtp_status + 3 ||
-           strcmp(smtp_status + (len - KL(CRLF)), CRLF) != 0)
-        {
-            if(len > 256)
-                len = 256;
-
-            x = len + KL(SMTP_REJPREFIX) + KL(CRLF) + 1;
-            t = (char*)alloca(x);
-
-            /* Note that we truncate long lines */
-            snprintf(t, x, "%s%.256s%s", SMTP_REJPREFIX, smtp_status, CRLF);
-            smtp_status = t;
-        }
+        /* Note that we truncate long lines */
+        snprintf(t, x, "%s%.256s%s", pref ? SMTP_REJPREFIX : "",
+                    smtp_status, crlf ? CRLF : "");
+        t[x] = 0;
+        smtp_status = t;
     }
 
     if(spio_write_data(ctx, &(ctx->client), smtp_status) == -1)

@@ -510,6 +510,23 @@ int spio_write_data(spctx_t* ctx, spio_t* io, const char* data)
     return spio_write_data_raw(ctx, io, (unsigned char*)data, len);
 }
 
+int spio_write_dataf(struct spctx* ctx, spio_t* io, const char* fmt, ...)
+{
+    char buf[SP_LINE_LENGTH];
+    va_list ap;
+    ASSERT(ctx && io && fmt);
+
+    buf[0] = 0;
+
+    va_start(ap, fmt);
+    vsnprintf(buf, SP_LINE_LENGTH, fmt, ap);
+    va_end(ap);
+
+    buf[SP_LINE_LENGTH - 1] = 0;
+
+    return spio_write_data(ctx, io, buf);
+}
+
 int spio_write_data_raw(spctx_t* ctx, spio_t* io, unsigned char* buf, int len)
 {
     int r;

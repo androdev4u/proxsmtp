@@ -49,6 +49,7 @@ typedef struct spstate
     struct timeval timeout;         /* Timeout for communication */
     int keepalives;                 /* Send server keep alives at this interval */
     int transparent;                /* Transparent proxying */
+    int xclient;                    /* Send XFORWARD info */
     const char* directory;          /* The temp directory */
     const char* user;               /* User to run as */
     const char* pidfile;            /* The pid file for daemon */

@@ -89,11 +89,13 @@ spthread_t;
 #define SMTP_DATAINTERMED   "354 Start mail input; end with <CRLF>.<CRLF>" CRLF
 #define SMTP_FAILED         "451 Local Error" CRLF
 #define SMTP_NOTSUPP        "502 Command not implemented" CRLF
+#define SMTP_NOTAUTH        "554 Insufficient authorization" CRLF
 #define SMTP_OK             "250 Ok" CRLF
 #define SMTP_REJPREFIX      "550 Content Rejected; "
 
 #define SMTP_DATA           "DATA" CRLF
 #define SMTP_NOOP           "NOOP" CRLF
+#define SMTP_XCLIENT        "XCLIENT ADDR=%s" CRLF
 #define SMTP_BANNER         "220 smtp.passthru" CRLF
 #define SMTP_HELO_RSP       "250 smtp.passthru" CRLF
 #define SMTP_EHLO_RSP       "250-smtp.passthru" CRLF
@@ -106,6 +108,8 @@ spthread_t;
 #define ESMTP_CHUNK         "CHUNKING"
 #define ESMTP_BINARY        "BINARYMIME"
 #define ESMTP_CHECK         "CHECKPOINT"
+#define ESMTP_XFORWARD      "XFORWARD"
+#define ESMTP_XCLIENT       "XCLIENT"
 
 #define HELO_CMD            "HELO"
 #define EHLO_CMD            "EHLO"
@@ -115,6 +119,8 @@ spthread_t;
 #define RSET_CMD            "RSET"
 #define STARTTLS_CMD        "STARTTLS"
 #define BDAT_CMD            "BDAT"
+#define XFORWARD_CMD        "XFORWARD"
+#define XCLIENT_CMD         "XCLIENT"
 
 #define DATA_END_SIG        "." CRLF
 
@@ -146,6 +152,7 @@ spthread_t;
 #define CFG_KEEPALIVES      "KeepAlives"
 #define CFG_USER            "User"
 #define CFG_PIDFILE         "PidFile"
+#define CFG_XCLIENT         "XClient"
 
 /* -----------------------------------------------------------------------
  *  DEFAULT SETTINGS
@@ -794,6 +801,10 @@ static int smtp_passthru(spctx_t* ctx)
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
 
+    /* XCLIENT is for use in access control */
+    int xclient_sup = 0;    /* Is XCLIENT supported? */
+    int xclient_sent = 0;   /* Have we sent an XCLIENT command? */
+
     ASSERT(spio_valid(&(ctx->client)) &&
            spio_valid(&(ctx->server)));
 
@@ -832,6 +843,26 @@ static int smtp_passthru(spctx_t* ctx)
             /* Only valid after EHLO or HELO commands */
             filter_host = 0;
 
+            /*
+             * At this point we may want to send our XCLIENT. This is a per
+             * connection command, lasts until a RSET.
+             */
+            if(xclient_sup && !xclient_sent && g_state.xclient)
+            {
+                sp_messagex(ctx, LOG_DEBUG, "sending XCLIENT");
+
+                if(spio_write_dataf(ctx, &(ctx->server), SMTP_XCLIENT, ctx->client.peername) == -1)
+                    RETURN(-1);
+
+                if(read_server_response(ctx) == -1)
+                    RETURN(-1);
+
+                if(!get_successful_rsp(S_LINE, NULL))
+                    sp_messagex(ctx, LOG_WARNING, "server didn't accept XCLIENT");
+
+                xclient_sent = 1;
+            }
+
             /* Handle the DATA section via our AV checker */
             if(is_first_word(C_LINE, DATA_CMD, KL(DATA_CMD)))
             {
@@ -858,13 +889,26 @@ static int smtp_passthru(spctx_t* ctx)
             }
 
             /*
-             * We need our response to HELO to be modified in order
+             * We need our response to HELO and EHLO to be modified in order
              * to prevent complaints about mail loops
              */
-            else if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)) ||
-                    is_first_word(C_LINE, HELO_CMD, KL(HELO_CMD)))
+            else if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)))
             {
                 /* EHLO can have multline responses so we set a flag */
+                filter_host = 1;
+            }
+
+            /*
+             * We always support XFORWARD on a HELO type connection. We do this
+             * for security reasons, so that a client can't get around filtering
+             * by backing up one on the protocol.
+             */
+            else if(is_first_word(C_LINE, HELO_CMD, KL(HELO_CMD)))
+            {
+                sp_messagex(ctx, LOG_DEBUG, "XCLIENT support assumed");
+                xclient_sup = 1;
+
+                /* Filter host as with EHLO above */
                 filter_host = 1;
             }
 
@@ -879,6 +923,25 @@ static int smtp_passthru(spctx_t* ctx)
                 sp_messagex(ctx, LOG_DEBUG, "ESMTP feature not supported");
 
                 if(spio_write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
+                    RETURN(-1);
+
+                /* Command handled */
+                continue;
+            }
+
+            /*
+             * For security reasons we're not about to forward any XCLIENTs
+             * or XFORWARDs from our client through. This could lead to a
+             * client using our privileged IP address to change an audit
+             * trail or relay etc...
+             */
+            else if(is_first_word(C_LINE, XCLIENT_CMD, KL(XCLIENT_CMD)) ||
+                    is_first_word(C_LINE, XFORWARD_CMD, KL(XFORWARD_CMD)))
+            {
+                trim_end(C_LINE);
+                sp_messagex(ctx, LOG_WARNING, "client attempted use of privileged feature: %s", C_LINE);
+
+                if(spio_write_data(ctx, &(ctx->client), SMTP_NOTAUTH) == -1)
                     RETURN(-1);
 
                 /* Command handled */
@@ -963,11 +1026,23 @@ static int smtp_passthru(spctx_t* ctx)
                  */
                 if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)))
                 {
+                    /*
+                     * On ESMTP connections we let the server tell us whether it
+                     * wants XFORWARDs or not. (In contrast to old SMTP above).
+                     */
+                    if(is_first_word(p, ESMTP_XCLIENT, KL(ESMTP_XCLIENT)))
+                    {
+                        sp_messagex(ctx, LOG_DEBUG, "XCLIENT supported");
+                        xclient_sup = 1;
+                    }
+
                     if(is_first_word(p, ESMTP_PIPELINE, KL(ESMTP_PIPELINE)) ||
                        is_first_word(p, ESMTP_TLS, KL(ESMTP_TLS)) ||
                        is_first_word(p, ESMTP_CHUNK, KL(ESMTP_CHUNK)) ||
                        is_first_word(p, ESMTP_BINARY, KL(ESMTP_BINARY)) ||
-                       is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)))
+                       is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)) ||
+                       is_first_word(p, ESMTP_XCLIENT, KL(ESMTP_XCLIENT)) ||
+                       is_first_word(p, ESMTP_XFORWARD, KL(ESMTP_XFORWARD)))
                     {
                         sp_messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space((char*)p));
 
@@ -1595,6 +1670,13 @@ int sp_parse_option(const char* name, const char* value)
         g_state.keepalives = strtol(value, &t, 10);
         if(*t || g_state.keepalives < 0)
             errx(2, "invalid setting: " CFG_KEEPALIVES);
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_XCLIENT, name) == 0)
+    {
+        if((g_state.xclient = strtob(value)) == -1)
+            errx(2, "invalid value for " CFG_XCLIENT);
         ret = 1;
     }
 

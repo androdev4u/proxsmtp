@@ -155,7 +155,10 @@ int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sany,
     fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
 
     if(connect(fd, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
+	{
+		close_raw(&fd);
         RETURN(-1);
+	}
 
     spio_attach(ctx, io, fd, NULL);
 

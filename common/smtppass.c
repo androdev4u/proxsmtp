@@ -142,8 +142,9 @@ const char* g_clamname = DEFAULT_CLAMAV;
 
 const char* g_header = DEFAULT_HEADER;      /* The header to add to email */
 const char* g_directory = _PATH_TMP;        /* The directory for temp files */
-unsigned int g_unique_id = 0x00001000;      /* For connection ids */
+unsigned int g_unique_id = 0x00100000;      /* For connection ids */
 int g_bounce = 0;                           /* Send back a reject line */
+int g_quarantine = 0;                       /* Leave virus files in temp dir */
 
 /* For main loop and signal handlers */
 int g_quit = 0;
@@ -167,6 +168,7 @@ static int connect_clam(clamsmtp_context_t* ctx);
 static int disconnect_clam(clamsmtp_context_t* ctx);
 static void add_to_logline(char* logline, char* prefix, char* line);
 static int avcheck_data(clamsmtp_context_t* ctx, char* logline);
+static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname);
 static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname);
 static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname);
 static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename);
@@ -191,7 +193,7 @@ int main(int argc, char* argv[])
     char* t;
 
     /* Parse the arguments nicely */
-    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:t:")) != -1)
+    while((ch = getopt(argc, argv, "bc:d:D:h:l:m:p:qt:")) != -1)
     {
         switch(ch)
         {
@@ -250,6 +252,11 @@ int main(int argc, char* argv[])
 			if(*t || g_timeout.tv_sec <= 0)
 				errx(1, "invalid timeout: %s", optarg);
 			break;
+
+        /* Leave virus files in directory */
+        case 'q':
+            g_quarantine = 1;
+            break;
 
         /* Usage information */
         case '?':
@@ -460,7 +467,7 @@ static void on_quit(int signal)
 
 static int usage()
 {
-    fprintf(stderr, "clamsmtpd [-b] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
+    fprintf(stderr, "clamsmtpd [-bq] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
             "[-l listenaddr] [-m maxconn] [-p pidfile] [-t timeout] serveraddr\n");
     exit(2);
 }
@@ -602,7 +609,6 @@ cleanup:
 static int smtp_passthru(clamsmtp_context_t* ctx)
 {
     char logline[LINE_LENGTH];
-    int processing = 0;
     int r, ret = 0;
     int first_rsp = 1;
 	fd_set mask;
@@ -759,10 +765,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 cleanup:
 
     if(ret == -1 && ctx->client != -1)
-    {
-       write_data(ctx, &(ctx->client),
-                processing ? SMTP_FAILED : SMTP_STARTFAILED);
-    }
+       write_data(ctx, &(ctx->client), SMTP_FAILED);
 
     return ret;
 }
@@ -964,6 +967,9 @@ static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
         if(write_data(ctx, &(ctx->client),
                    g_bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
             RETURN(-1);
+
+        /* Any special post operation actions on the virus */
+        quarantine_virus(ctx, buf);
         break;
 
     default:
@@ -1019,6 +1025,58 @@ static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
     if(write_data(ctx, &(ctx->client), ctx->line) == -1)
         return -1;
 
+    return 0;
+}
+
+static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname)
+{
+    char buf[MAXPATHLEN];
+    char* t;
+
+    if(!g_quarantine)
+        return 0;
+
+    strlcpy(buf, g_directory, MAXPATHLEN);
+    strlcat(buf, "/virus.", MAXPATHLEN);
+
+    /* Points to null terminator */
+    t = buf + strlen(buf);
+
+    /*
+     * Yes, I know we're using mktemp. And yet we're doing it in
+     * a safe manner due to the link command below not overwriting
+     * existing files.
+     */
+    for(;;)
+    {
+        /* Null terminate off the ending, and replace with X's for mktemp */
+        *t = 0;
+        strlcat(buf, "XXXXXX", MAXPATHLEN);
+
+        if(!mktemp(buf))
+        {
+            message(ctx, LOG_ERR, "couldn't create quarantine file name");
+            return -1;
+        }
+
+        /* Try to link the file over to the temp */
+        if(link(tempname, buf) == -1)
+        {
+            /* We don't want to allow race conditions */
+            if(errno == EEXIST)
+            {
+                message(ctx, LOG_WARNING, "race condition when quarantining virus file: %s", buf);
+                continue;
+            }
+
+            message(ctx, LOG_ERR, "couldn't quarantine virus file");
+            return -1;
+        }
+
+        break;
+    }
+
+    messagex(ctx, LOG_INFO, "quarantined virus file as: %s", buf);
     return 0;
 }
 

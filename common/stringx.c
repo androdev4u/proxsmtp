@@ -42,89 +42,11 @@
 #include <syslog.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <unistd.h>
-#include <errno.h>
-#include <err.h>
-#include <stdarg.h>
 #include <strings.h>
 
 #include "usuals.h"
 #include "compat.h"
-#include "clamsmtpd.h"
-#include "util.h"
-
-/* ----------------------------------------------------------------------------------
- *  Logging
- */
-
-const char kMsgDelimiter[] = ": ";
-#define MAX_MSGLEN  256
-
-static void vmessage(clamsmtp_context_t* ctx, int level, int err,
-                     const char* msg, va_list ap)
-{
-    size_t len;
-    char* m;
-    int e = errno;
-
-    if(g_state->daemonized)
-    {
-        if(level >= LOG_DEBUG)
-            return;
-    }
-    else
-    {
-        if(g_state->debug_level < level)
-            return;
-    }
-
-    ASSERT(msg);
-
-    len = strlen(msg) + 20 + MAX_MSGLEN;
-    m = (char*)alloca(len);
-
-    if(m)
-    {
-        if(ctx)
-            snprintf(m, len, "%06X: %s%s", ctx->id, msg, err ? ": " : "");
-        else
-            snprintf(m, len, "%s%s", msg, err ? ": " : "");
-
-        if(err)
-        {
-            /* TODO: strerror_r doesn't want to work for us
-            strerror_r(e, m + strlen(m), MAX_MSGLEN); */
-            strncat(m, strerror(e), len);
-        }
-
-        m[len - 1] = 0;
-        msg = m;
-    }
-
-    /* Either to syslog or stderr */
-    if(g_state->daemonized)
-        vsyslog(level, msg, ap);
-    else
-        vwarnx(msg, ap);
-}
-
-void messagex(clamsmtp_context_t* ctx, int level, const char* msg, ...)
-{
-    va_list ap;
-
-    va_start(ap, msg);
-    vmessage(ctx, level, 0, msg, ap);
-    va_end(ap);
-}
-
-void message(clamsmtp_context_t* ctx, int level, const char* msg, ...)
-{
-    va_list ap;
-
-    va_start(ap, msg);
-    vmessage(ctx, level, 1, msg, ap);
-    va_end(ap);
-}
+#include "stringx.h"
 
 /* ----------------------------------------------------------------------------------
  *  Parsing
@@ -231,53 +153,22 @@ char* trim_space(char* data)
     return trim_end(data);
 }
 
-/* -----------------------------------------------------------------------
- * Locking
- */
-
-void plock()
+/* String to bool helper function */
+int strtob(const char* str)
 {
-    int r;
+    if(strcasecmp(str, "0") == 0 ||
+       strcasecmp(str, "no") == 0 ||
+       strcasecmp(str, "false") == 0 ||
+       strcasecmp(str, "f") == 0 ||
+       strcasecmp(str, "off") == 0)
+        return 0;
 
-#ifdef _DEBUG
-    int wait = 0;
-#endif
+    if(strcasecmp(str, "1") == 0 ||
+       strcasecmp(str, "yes") == 0 ||
+       strcasecmp(str, "true") == 0 ||
+       strcasecmp(str, "t") == 0 ||
+       strcasecmp(str, "on") == 0)
+        return 1;
 
-#ifdef _DEBUG
-    r = pthread_mutex_trylock((pthread_mutex_t*)&(g_state->mutex));
-    if(r == EBUSY)
-    {
-        wait = 1;
-        message(NULL, LOG_DEBUG, "thread will block: %d", pthread_self());
-        r = pthread_mutex_lock((pthread_mutex_t*)&(g_state->mutex));
-    }
-
-#else
-    r = pthread_mutex_lock(&(g_state->mutex));
-
-#endif
-
-    if(r != 0)
-    {
-        errno = r;
-        message(NULL, LOG_CRIT, "threading problem. couldn't lock mutex");
-    }
-
-#ifdef _DEBUG
-    else if(wait)
-    {
-        message(NULL, LOG_DEBUG, "thread unblocked: %d", pthread_self());
-    }
-#endif
+    return -1;
 }
-
-void punlock()
-{
-    int r = pthread_mutex_unlock((pthread_mutex_t*)&(g_state->mutex));
-    if(r != 0)
-    {
-        errno = r;
-        message(NULL, LOG_CRIT, "threading problem. couldn't unlock mutex");
-    }
-}
-

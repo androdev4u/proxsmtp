@@ -36,43 +36,36 @@
  *
  */
 
-#ifndef __USUALS_H__
-#define __USUALS_H__
+#ifndef __SPPRIV_H__
+#define __SPPRIV_H__
 
-#include <sys/types.h>
+#include "smtppass.h"
 
-#include "config.h"
+typedef struct spstate
+{
+    /* Settings ------------------------------- */
+    int debug_level;                /* The level to print stuff to console */
+    int max_threads;                /* Maximum number of threads to process at once */
+    struct timeval timeout;         /* Timeout for communication */
+    int transparent;                /* Transparent proxying */
+    const char* directory;          /* The temp directory */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <string.h>
+    struct sockaddr_any outaddr;    /* The outgoing address */
+    const char* outname;
+    struct sockaddr_any listenaddr; /* Address to listen on */
+    const char* listenname;
 
-#include "compat.h"
+    /* State --------------------------------- */
+    const char* name;               /* The name of the program */
+    int quit;                       /* Quit the process */
+    int daemonized;                 /* Whether process is daemonized or not */
 
-#ifndef NULL
-#define NULL 0
-#endif
+    /* Internal Use ------------------------- */
+    char* _p;
+}
+spstate_t;
 
-#ifndef max
-#define max(a,b)  (((a) > (b)) ? (a) : (b))
-#endif
+extern spstate_t g_state;
 
-#ifndef min
-#define min(a,b)  (((a) < (b)) ? (a) : (b))
-#endif
+#endif /* __SPPRIV_H__ */
 
-#define countof(x) (sizeof(x) / sizeof(x[0]))
-
-#ifdef _DEBUG
-  #include "assert.h"
-  #define ASSERT assert
-#else
-  #define ASSERT
-#endif
-
-#define KL(s)               ((sizeof(s) - 1) / sizeof(char))
-#define RETURN(x)           { ret = (x); goto cleanup; }
-
-
-#endif /* __USUALS_H__ */

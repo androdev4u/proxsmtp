@@ -57,14 +57,13 @@ void* reallocf(void* p, size_t sz);
 
 #include <pthread.h>
 
-/* TODO: Move this logic to configure */
 #if HAVE_ERR_MUTEX == 1
 # define MUTEX_TYPE PTHREAD_MUTEX_ERRORCHECK_NP
 #else
 # if HAVE_ERR_MUTEX == 2
 #   define MUTEX_TYPE PTHREAD_MUTEX_ERRORCHECK
 # else
-#   error "Need error checking mutex functionality"
+#   undef MUTEX_TYPE
 # endif
 #endif
 

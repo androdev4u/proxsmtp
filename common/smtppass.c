@@ -36,6 +36,7 @@
  *  Andreas Steinmetz <ast@domdv.de>
  */
 
+/* TODO: Remove unneeded headers */
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -50,6 +51,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <err.h>
+#include <paths.h>
+#include <stdarg.h>
 
 #include "usuals.h"
 
@@ -59,19 +62,19 @@
 
 #include "compat.h"
 #include "sock_any.h"
-#include "smtppass.h"
-#include "util.h"
+#include "stringx.h"
+#include "sppriv.h"
 
 /* -----------------------------------------------------------------------
  *  STRUCTURES
  */
 
-typedef struct smtppass_thread
+typedef struct spthread
 {
     pthread_t tid;      /* Written to by the main thread */
     int fd;             /* The file descriptor or -1 */
 }
-smtppass_thread_t;
+spthread_t;
 
 /* -----------------------------------------------------------------------
  *  STRINGS
@@ -82,17 +85,16 @@ smtppass_thread_t;
 #define SMTP_TOOLONG        "500 Line too long" CRLF
 #define SMTP_STARTBUSY      "554 Server Busy" CRLF
 #define SMTP_STARTFAILED    "554 Local Error" CRLF
-#define SMTP_DATAVIRUS      "550 Virus Detected; Content Rejected" CRLF
 #define SMTP_DATAINTERMED   "354 Start mail input; end with <CRLF>.<CRLF>" CRLF
 #define SMTP_FAILED         "451 Local Error" CRLF
 #define SMTP_NOTSUPP        "502 Command not implemented" CRLF
-#define SMTP_DATAVIRUSOK    "250 Virus Detected; Discarded Email" CRLF
 #define SMTP_OK             "250 Ok" CRLF
+#define SMTP_REJPREFIX      "550 Content Rejected; "
 
 #define SMTP_DATA           "DATA" CRLF
-#define SMTP_BANNER         "220 clamsmtp" CRLF
-#define SMTP_HELO_RSP       "250 clamsmtp" CRLF
-#define SMTP_EHLO_RSP       "250-clamsmtp" CRLF
+#define SMTP_BANNER         "220 smtp.passthru" CRLF
+#define SMTP_HELO_RSP       "250 smtp.passthru" CRLF
+#define SMTP_EHLO_RSP       "250-smtp.passthru" CRLF
 #define SMTP_DELIMS         "\r\n\t :"
 #define SMTP_MULTI_DELIMS   " -"
 
@@ -117,227 +119,165 @@ smtppass_thread_t;
 #define OK_RSP              "250"
 #define START_RSP           "220"
 
+#define CFG_MAXTHREADS      "MaxConnections"
+#define CFG_TIMEOUT         "TimeOut"
+#define CFG_OUTADDR         "OutAddress"
+#define CFG_LISTENADDR      "Listen"
+#define CFG_TRANSPARENT     "TransparentProxy"
+#define CFG_DIRECTORY       "TempDirectory"
+
+/* The set of delimiters that can be present between config and value */
+#define CFG_DELIMS      ": \t"
+
+
+#define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (SP_LINE_LENGTH - 2))
+
+/* -----------------------------------------------------------------------
+ *  DEFAULT SETTINGS
+ */
+
+#define DEFAULT_SOCKET  "10025"
+#define DEFAULT_PORT    10025
+#define DEFAULT_MAXTHREADS  64
+#define DEFAULT_TIMEOUT   180
 
 /* -----------------------------------------------------------------------
  *  GLOBALS
  */
 
-const clstate_t* g_state = NULL;            /* The state and configuration of the daemon */
+spstate_t g_state;                          /* The state and configuration of the daemon */
 unsigned int g_unique_id = 0x00100000;      /* For connection ids */
+pthread_mutex_t g_mutex;                      /* The main mutex */
+pthread_mutexattr_t g_mtxattr;
 
 
 /* -----------------------------------------------------------------------
  *  FORWARD DECLARATIONS
  */
 
-static void usage();
 static void on_quit(int signal);
 static void pid_file(const char* pidfile, int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
-static int smtp_passthru(clamsmtp_context_t* ctx);
-static int connect_out(clamsmtp_context_t* ctx);
-static int connect_clam(clamsmtp_context_t* ctx);
-static int disconnect_clam(clamsmtp_context_t* ctx);
-static void add_to_logline(char* logline, char* prefix, char* line);
-static int avcheck_data(clamsmtp_context_t* ctx, char* logline);
-static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname);
-static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname);
-static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname);
-static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename);
-static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* logline);
-static int read_server_response(clamsmtp_context_t* ctx);
-static void read_junk(clamsmtp_context_t* ctx, int fd);
+static int smtp_passthru(spctx_t* ctx);
+static int connect_out(spctx_t* ctx);
+static int read_server_response(spctx_t* ctx);
+static int parse_config_file(const char* configfile);
 
+/* Used externally in some cases */
+int sp_parse_option(const char* name, const char* option);
 
 /* ----------------------------------------------------------------------------------
- *  STARTUP ETC...
+ *  BASIC RUN FUNCTIONALITY
  */
 
-int main(int argc, char* argv[])
+void sp_init(const char* name)
 {
-    const char* configfile = DEFAULT_CONFIG;
-    const char* pidfile = NULL;
-    clstate_t state;
-    int warnargs = 0;
+    int r;
+
+    ASSERT(name);
+
+    memset(&g_state, 0, sizeof(g_state));
+
+    /* Setup the defaults */
+    g_state.debug_level = -1;
+    g_state.max_threads = DEFAULT_MAXTHREADS;
+    g_state.timeout.tv_sec = DEFAULT_TIMEOUT;
+    g_state.directory = _PATH_TMP;
+    g_state.name = name;
+
+    /* We need the default to parse into a useable form, so we do this: */
+    r = sp_parse_option(CFG_LISTENADDR, DEFAULT_SOCKET);
+    ASSERT(r == 1);
+
+    /* Create the main mutex and condition variable */
+    if(pthread_mutexattr_init(&g_mtxattr) != 0 ||
+#ifdef HAVE_ERR_MUTEX
+       pthread_mutexattr_settype(&g_mtxattr, MUTEX_TYPE) ||
+#endif
+       pthread_mutex_init(&g_mutex, &g_mtxattr) != 0)
+        errx(1, "threading problem. can't create mutex or condition var");
+}
+
+int sp_run(const char* configfile, const char* pidfile, int dbg_level)
+{
     int sock;
     int true = 1;
-    int ch = 0;
-    char* t;
 
-    clstate_init(&state);
-    g_state = &state;
+    ASSERT(configfile);
+    ASSERT(g_state.name);
 
-    /* Parse the arguments nicely */
-    while((ch = getopt(argc, argv, "bc:d:D:f:h:l:m:p:qt:v")) != -1)
-    {
-        switch(ch)
-        {
-        /* Actively reject messages */
-        case 'b':
-            state.bounce = 1;
-            warnargs = 1;
-            break;
-
-        /* Change the CLAM socket */
-        case 'c':
-            state.clamname = optarg;
-            warnargs = 1;
-            break;
-
-		/*  Don't daemonize  */
-        case 'd':
-            state.debug_level = strtol(optarg, &t, 10);
-            if(*t) /* parse error */
-                errx(1, "invalid debug log level");
-            state.debug_level += LOG_ERR;
-            break;
-
-        /* The directory for the files */
-        case 'D':
-            state.directory = optarg;
-            warnargs = 1;
-            break;
-
-        /* The configuration file */
-        case 'f':
-            configfile = optarg;
-            break;
-
-        /* The header to add */
-        case 'h':
-            if(strlen(optarg) == 0)
-                state.header = NULL;
-            else
-                state.header = optarg;
-            warnargs = 1;
-            break;
-
-        /* Change our listening port */
-        case 'l':
-            state.listenname = optarg;
-            warnargs = 1;
-            break;
-
-        /* The maximum number of threads */
-        case 'm':
-            state.max_threads = strtol(optarg, &t, 10);
-            if(*t) /* parse error */
-                errx(1, "invalid max threads");
-            warnargs = 1;
-            break;
-
-        /* Write out a pid file */
-        case 'p':
-            pidfile = optarg;
-            break;
-
-        /* The timeout */
-		case 't':
-			state.timeout.tv_sec = strtol(optarg, &t, 10);
-			if(*t) /* parse error */
-				errx(1, "invalid timeout");
-            warnargs = 1;
-			break;
-
-        /* Leave virus files in directory */
-        case 'q':
-            state.quarantine = 1;
-            break;
-
-        /* Print version number */
-        case 'v':
-            printf("clamsmtpd (version %s)\n", VERSION);
-            exit(0);
-            break;
-
-        /* Leave all files in the tmp directory */
-        case 'X':
-            state.debug_files = 1;
-            warnargs = 1;
-            break;
-
-        /* Usage information */
-        case '?':
-        default:
-            usage();
-            break;
-		}
-    }
-
-	argc -= optind;
-	argv += optind;
-
-    if(argc > 1)
-        usage();
-    if(argc == 1)
-    {
-        state.outname = argv[0];
-        warnargs = 1;
-    }
-
-    if(warnargs)
-        warnx("please use configuration file instead of command-line flags: %s", configfile);
+    if(!(dbg_level == -1 || dbg_level <= LOG_DEBUG))
+        errx(2, "invalid debug log level (must be between 1 and 4)");
+    g_state.debug_level = dbg_level;
 
     /* Now parse the configuration file */
-    if(clstate_parse_config(&state, configfile) == -1)
+    if(parse_config_file(configfile) == -1)
     {
-        /* Only error when it was forced */
-        if(configfile != DEFAULT_CONFIG)
-            err(1, "couldn't open config file: %s", configfile);
-        else
-            warnx("default configuration file not found: %s", configfile);
+        /*
+         * We used to do a check here before whether it was the default
+         * configuration file or not, but we can't do that any longer
+         * as it comes from the app. Usually lack of a configuration
+         * file will cause the following checks to fail
+         */
+         warnx("configuration file not found: %s", configfile);
     }
 
-    clstate_validate(&state);
+    /* This option has no default, but is required ... */
+    if(g_state.outname == NULL && !g_state.transparent)
+        errx(2, "no " CFG_OUTADDR " specified.");
 
-    messagex(NULL, LOG_DEBUG, "starting up...");
+    /* ... unless we're in transparent proxy mode */
+    else if(g_state.outname != NULL && g_state.transparent)
+        warnx("the " CFG_OUTADDR " option will be ignored when " CFG_TRANSPARENT " is enabled");
+
+    sp_messagex(NULL, LOG_DEBUG, "starting up...");
 
     /* When set to this we daemonize */
-    if(g_state->debug_level == -1)
+    if(g_state.debug_level == -1)
     {
         /* Fork a daemon nicely here */
         if(daemon(0, 0) == -1)
         {
-            message(NULL, LOG_ERR, "couldn't run as daemon");
+            sp_message(NULL, LOG_ERR, "couldn't run as daemon");
             exit(1);
         }
 
-        messagex(NULL, LOG_DEBUG, "running as a daemon");
-        state.daemonized = 1;
+        sp_messagex(NULL, LOG_DEBUG, "running as a daemon");
+        g_state.daemonized = 1;
 
         /* Open the system log */
-        openlog("clamsmtpd", 0, LOG_MAIL);
+        openlog(g_state.name, 0, LOG_MAIL);
     }
 
     /* Create the socket */
-    sock = socket(SANY_TYPE(g_state->listenaddr), SOCK_STREAM, 0);
+    sock = socket(SANY_TYPE(g_state.listenaddr), SOCK_STREAM, 0);
     if(sock < 0)
     {
-        message(NULL, LOG_CRIT, "couldn't open socket");
+        sp_message(NULL, LOG_CRIT, "couldn't open socket");
         exit(1);
     }
 
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true));
 
     /* Unlink the socket file if it exists */
-    if(SANY_TYPE(g_state->listenaddr) == AF_UNIX)
-        unlink(g_state->listenname);
+    if(SANY_TYPE(g_state.listenaddr) == AF_UNIX)
+        unlink(g_state.listenname);
 
-    if(bind(sock, &SANY_ADDR(g_state->listenaddr), SANY_LEN(g_state->listenaddr)) != 0)
+    if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
     {
-        message(NULL, LOG_CRIT, "couldn't bind to address: %s", g_state->listenname);
+        sp_message(NULL, LOG_CRIT, "couldn't bind to address: %s", g_state.listenname);
         exit(1);
     }
 
     /* Let 5 connections queue up */
     if(listen(sock, 5) != 0)
     {
-        message(NULL, LOG_CRIT, "couldn't listen on socket");
+        sp_message(NULL, LOG_CRIT, "couldn't listen on socket");
         exit(1);
     }
 
-    messagex(NULL, LOG_DEBUG, "created socket: %s", g_state->listenname);
+    sp_messagex(NULL, LOG_DEBUG, "created socket: %s", g_state.listenname);
 
     /* Handle some signals */
     signal(SIGPIPE, SIG_IGN);
@@ -351,34 +291,46 @@ int main(int argc, char* argv[])
     if(pidfile)
         pid_file(pidfile, 1);
 
-    messagex(NULL, LOG_DEBUG, "accepting connections");
+    sp_messagex(NULL, LOG_DEBUG, "accepting connections");
 
     connection_loop(sock);
 
     if(pidfile)
         pid_file(pidfile, 0);
 
-    messagex(NULL, LOG_DEBUG, "stopped");
+    /* Our listen socket */
+    close(sock);
 
-    /*
-     * We have to do this at the very end because even printing
-     * messages requires that g_state is valid.
-     */
-    clstate_cleanup(&state);
+    sp_messagex(NULL, LOG_DEBUG, "stopped processing");
     return 0;
+}
+
+void sp_quit()
+{
+    /* The handler sets the flag and this also interrupts io */
+    kill(getpid(), SIGTERM);
+}
+
+int sp_is_quit()
+{
+    return g_state.quit ? 1 : 0;
+}
+
+void sp_done()
+{
+    /* Close the mutex */
+    pthread_mutex_destroy(&g_mutex);
+    pthread_mutexattr_destroy(&g_mtxattr);
+
+    if(g_state._p)
+        free(g_state._p);
+
+    memset(&g_state, 0, sizeof(g_state));
 }
 
 static void on_quit(int signal)
 {
-    ((clstate_t*)g_state)->quit = 1;
-    /* fprintf(stderr, "clamsmtpd: got signal to quit\n"); */
-}
-
-static void usage()
-{
-    fprintf(stderr, "usage: clamsmtpd [-d debuglevel] [-f configfile] [-p pidfile]\n");
-    fprintf(stderr, "       clamsmtpd -v\n");
-    exit(2);
+    g_state.quit = 1;
 }
 
 static void pid_file(const char* pidfile, int write)
@@ -388,45 +340,44 @@ static void pid_file(const char* pidfile, int write)
         FILE* f = fopen(pidfile, "w");
         if(f == NULL)
         {
-            message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
+            sp_message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
         }
         else
         {
             fprintf(f, "%d\n", (int)getpid());
 
             if(ferror(f))
-                message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
+                sp_message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
+            if(fclose(f) == EOF)
+                sp_message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
 
-            fclose(f);
         }
 
-        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
+        sp_messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
     }
 
     else
     {
         unlink(pidfile);
-        messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
+        sp_messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
     }
 }
 
-
-/* ----------------------------------------------------------------------------------
- *  CONNECTION HANDLING
- */
-
 static void connection_loop(int sock)
 {
-    clamsmtp_thread_t* threads = NULL;
+    spthread_t* threads = NULL;
     int fd, i, x, r;
 
     /* Create the thread buffers */
-    threads = (clamsmtp_thread_t*)calloc(g_state->max_threads, sizeof(clamsmtp_thread_t));
+    threads = (spthread_t*)calloc(g_state.max_threads, sizeof(spthread_t));
     if(!threads)
-        errx(1, "out of memory");
+    {
+        sp_messagex(NULL, LOG_CRIT, "out of memory");
+        return;
+    }
 
     /* Now loop and accept the connections */
-    while(!g_state->quit)
+    while(!sp_is_quit())
     {
         fd = accept(sock, NULL, NULL);
         if(fd == -1)
@@ -438,39 +389,38 @@ static void connection_loop(int sock)
                 break;
 
             case ECONNABORTED:
-                message(NULL, LOG_ERR, "couldn't accept a connection");
+                sp_message(NULL, LOG_ERR, "couldn't accept a connection");
                 break;
 
             default:
-                message(NULL, LOG_ERR, "couldn't accept a connection");
-                ((clstate_t*)g_state)->quit = 1;
+                sp_message(NULL, LOG_ERR, "couldn't accept a connection");
                 break;
             };
 
-            if(g_state->quit)
+            if(sp_is_quit())
                 break;
 
             continue;
         }
 
         /* Set timeouts on client */
-        if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) < 0 ||
-           setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) < 0)
-            message(NULL, LOG_WARNING, "couldn't set timeouts on incoming connection");
+        if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) < 0 ||
+           setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) < 0)
+            sp_message(NULL, LOG_WARNING, "couldn't set timeouts on incoming connection");
 
         /* Look for thread and also clean up others */
-        for(i = 0; i < g_state->max_threads; i++)
+        for(i = 0; i < g_state.max_threads; i++)
         {
             /* Find a thread to run or clean up old threads */
             if(threads[i].tid != 0)
             {
-                plock();
+                sp_lock();
                     x = threads[i].fd;
-                punlock();
+                sp_unlock();
 
                 if(x == -1)
                 {
-                    messagex(NULL, LOG_DEBUG, "cleaning up completed thread");
+                    sp_messagex(NULL, LOG_DEBUG, "cleaning up completed thread");
                     pthread_join(threads[i].tid, NULL);
                     threads[i].tid = 0;
                 }
@@ -478,7 +428,7 @@ static void connection_loop(int sock)
                 else
                 {
                     /* For debugging connection problems: */
-                    messagex(NULL, LOG_DEBUG, "active connection thread: %x", (int)threads[i].tid);
+                    sp_messagex(NULL, LOG_DEBUG, "active connection thread: %x", (int)threads[i].tid);
                 }
 #endif
             }
@@ -492,12 +442,16 @@ static void connection_loop(int sock)
                 if(r != 0)
                 {
                     errno = r;
-                    message(NULL, LOG_ERR, "couldn't create thread");
-                    ((clstate_t*)g_state)->quit = 1;
+                    sp_message(NULL, LOG_ERR, "couldn't create thread");
+
+                    write(fd, SMTP_STARTFAILED, KL(SMTP_STARTFAILED));
+                    shutdown(fd, SHUT_RDWR);
+                    close(fd);
+                    fd = -1;
                     break;
                 }
 
-                messagex(NULL, LOG_DEBUG, "created thread for connection");
+                sp_messagex(NULL, LOG_DEBUG, "created thread for connection");
                 fd = -1;
                 break;
             }
@@ -506,8 +460,7 @@ static void connection_loop(int sock)
         /* Check to make sure we have a thread */
         if(fd != -1)
         {
-            messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_state->max_threads);
-
+            sp_messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_state.max_threads);
             write(fd, SMTP_STARTBUSY, KL(SMTP_STARTBUSY));
             shutdown(fd, SHUT_RDWR);
             close(fd);
@@ -515,34 +468,105 @@ static void connection_loop(int sock)
         }
     }
 
-    messagex(NULL, LOG_DEBUG, "waiting for threads to quit");
+    sp_messagex(NULL, LOG_DEBUG, "waiting for threads to quit");
 
     /* Quit all threads here */
-    for(i = 0; i < g_state->max_threads; i++)
+    for(i = 0; i < g_state.max_threads; i++)
     {
         /* Clean up quit threads */
         if(threads[i].tid != 0)
         {
             if(threads[i].fd != -1)
             {
-                plock();
+                sp_lock();
                     fd = threads[i].fd;
                     threads[i].fd = -1;
-                punlock();
+                sp_unlock();
 
                 shutdown(fd, SHUT_RDWR);
                 close(fd);
             }
 
             pthread_join(threads[i].tid, NULL);
+            threads[i].tid = 0;
         }
     }
+
+    free(threads);
+}
+
+static spctx_t* init_thread(int fd)
+{
+    spctx_t* ctx;
+
+    ctx = cb_new_context();
+    if(ctx)
+    {
+        memset(ctx, 0, sizeof(*ctx));
+
+        spio_init(&(ctx->server), "SERVER");
+        spio_init(&(ctx->client), "CLIENT");
+
+        sp_lock();
+            /* Assign a unique id to the connection */
+            ctx->id = g_unique_id++;
+
+            /* We don't care about wraps, but we don't want zero */
+            if(g_unique_id == 0)
+                g_unique_id++;
+        sp_unlock();
+
+        ctx->client.fd = fd;
+        ASSERT(ctx->client.fd != -1);
+        sp_messagex(ctx, LOG_DEBUG, "processing %d on thread %x", ctx->client.fd, (int)pthread_self());
+
+        /* Connect to the outgoing server ... */
+        if(connect_out(ctx) == -1)
+        {
+            cb_del_context(ctx);
+            ctx = NULL;
+        }
+    }
+
+    return ctx;
+}
+
+static void cleanup_context(spctx_t* ctx)
+{
+    ASSERT(ctx);
+
+    if(ctx->cachefile)
+    {
+        fclose(ctx->cachefile);
+        ctx->cachefile = NULL;
+    }
+
+    if(ctx->cachename[0])
+    {
+        unlink(ctx->cachename);
+        ctx->cachename[0] = 0;
+    }
+
+    ctx->logline[0] = 0;
+}
+
+
+static void done_thread(spctx_t* ctx)
+{
+    ASSERT(ctx);
+
+    spio_disconnect(ctx, &(ctx->client));
+    spio_disconnect(ctx, &(ctx->server));
+
+    /* Clean up file stuff */
+    cleanup_context(ctx);
+    cb_del_context(ctx);
 }
 
 static void* thread_main(void* arg)
 {
-    clamsmtp_thread_t* thread = (clamsmtp_thread_t*)arg;
-    clamsmtp_context_t* ctx = NULL;
+    spthread_t* thread = (spthread_t*)arg;
+    spctx_t* ctx = NULL;
     int processing = 0;
     int ret = 0;
     int fd;
@@ -552,47 +576,20 @@ static void* thread_main(void* arg)
     siginterrupt(SIGINT, 1);
     siginterrupt(SIGTERM, 1);
 
-    plock();
+    sp_lock();
         /* Get the client socket */
         fd = thread->fd;
-    punlock();
+    sp_unlock();
 
-    ctx = (clamsmtp_context_t*)calloc(1, sizeof(clamsmtp_context_t));
+    ctx = init_thread(fd);
     if(!ctx)
     {
         /* Special case. We don't have a context so clean up descriptor */
         close(fd);
 
-        messagex(NULL, LOG_CRIT, "out of memory");
+        /* new_context() should have already logged reason */
         RETURN(-1);
     }
-
-    memset(ctx, 0, sizeof(*ctx));
-
-    clio_init(&(ctx->server), "SERVER");
-    clio_init(&(ctx->client), "CLIENT");
-    clio_init(&(ctx->clam),   "CLAM  ");
-
-    plock();
-        /* Assign a unique id to the connection */
-        ctx->id = g_unique_id++;
-
-        /* We don't care about wraps, but we don't want zero */
-        if(g_unique_id == 0)
-            g_unique_id++;
-    punlock();
-
-    ctx->client.fd = fd;
-    ASSERT(ctx->client.fd != -1);
-    messagex(ctx, LOG_DEBUG, "processing %d on thread %x", ctx->client.fd, (int)pthread_self());
-
-    /* Connect to the outgoing server ... */
-    if(connect_out(ctx) == -1)
-        RETURN(-1);
-
-    /* ... and to the AV daemon */
-    if(connect_clam(ctx) == -1)
-        RETURN(-1);
 
     /* call the processor */
     processing = 1;
@@ -602,25 +599,22 @@ cleanup:
 
     if(ctx)
     {
-        disconnect_clam(ctx);
-
         /* Let the client know about fatal errors */
-        if(!processing && ret == -1 && clio_valid(&(ctx->client)))
-           clio_write_data(ctx, &(ctx->client), SMTP_STARTFAILED);
+        if(!processing && ret == -1 && spio_valid(&(ctx->client)))
+           spio_write_data(ctx, &(ctx->client), SMTP_STARTFAILED);
 
-        clio_disconnect(ctx, &(ctx->client));
-        clio_disconnect(ctx, &(ctx->server));
+        done_thread(ctx);
     }
 
     /* mark this as done */
-    plock();
+    sp_lock();
         thread->fd = -1;
-    punlock();
+    sp_unlock();
 
     return (void*)(ret == 0 ? 0 : 1);
 }
 
-static int connect_out(clamsmtp_context_t* ctx)
+static int connect_out(spctx_t* ctx)
 {
     struct sockaddr_any peeraddr;
     struct sockaddr_any addr;
@@ -634,16 +628,16 @@ static int connect_out(clamsmtp_context_t* ctx)
     /* Get the peer name */
     if(getpeername(ctx->client.fd, &SANY_ADDR(peeraddr), &SANY_LEN(peeraddr)) == -1 ||
        sock_any_ntop(&peeraddr, buf, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
-        message(ctx, LOG_WARNING, "couldn't get peer address");
+        sp_message(ctx, LOG_WARNING, "couldn't get peer address");
     else
-        messagex(ctx, LOG_INFO, "accepted connection from: %s", buf);
+        sp_messagex(ctx, LOG_INFO, "accepted connection from: %s", buf);
 
     /* Create the server connection address */
-    outaddr = &(g_state->outaddr);
-    outname = g_state->outname;
+    outaddr = &(g_state.outaddr);
+    outname = g_state.outname;
 
     /* For transparent proxying we have to discover the address to connect to */
-    if(g_state->transparent)
+    if(g_state.transparent)
     {
         memset(&addr, 0, sizeof(addr));
         SANY_LEN(addr) = sizeof(addr);
@@ -654,14 +648,14 @@ static int connect_out(clamsmtp_context_t* ctx)
         if(getsockname(ctx->client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
 #endif
         {
-            message(ctx, LOG_ERR, "couldn't get source address for transparent proxying");
+            sp_message(ctx, LOG_ERR, "couldn't get source address for transparent proxying");
             return -1;
         }
 
         /* Check address types */
         if(sock_any_cmp(&addr, &peeraddr, SANY_OPT_NOPORT) == 0)
         {
-            messagex(ctx, LOG_ERR, "loop detected in transparent proxying");
+            sp_messagex(ctx, LOG_ERR, "loop detected in transparent proxying");
             return -1;
         }
 
@@ -675,7 +669,7 @@ static int connect_out(clamsmtp_context_t* ctx)
            outaddr->s.in.sin_addr.s_addr == 0)
         {
             /* Use the incoming IP as the default */
-            memcpy(&addr, &(g_state->outaddr), sizeof(addr));
+            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
             memcpy(&(addr.s.in.sin_addr), &(peeraddr.s.in.sin_addr), sizeof(addr.s.in.sin_addr));
             outaddr = &addr;
         }
@@ -684,7 +678,7 @@ static int connect_out(clamsmtp_context_t* ctx)
                 outaddr->s.in.in6.sin_addr.s_addr == 0)
         {
             /* Use the incoming IP as the default */
-            memcpy(&addr, &(g_state->outaddr), sizeof(addr));
+            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
             memcpy(&(addr.s.in.sin6_addr), &(peeraddr.s.in.sin6_addr), sizeof(addr.s.in.sin6_addr));
             outaddr = &addr;
         }
@@ -692,7 +686,7 @@ static int connect_out(clamsmtp_context_t* ctx)
     }
 
     /* Reparse name if possible */
-    if(outaddr != &(g_state->outaddr))
+    if(outaddr != &(g_state.outaddr))
     {
         if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)
             outname = buf;
@@ -701,7 +695,7 @@ static int connect_out(clamsmtp_context_t* ctx)
     }
 
     /* Connect to the server */
-    if(clio_connect(ctx, &(ctx->server), outaddr, outname) == -1)
+    if(spio_connect(ctx, &(ctx->server), outaddr, outname) == -1)
         return -1;
 
     return 0;
@@ -711,33 +705,33 @@ static int connect_out(clamsmtp_context_t* ctx)
  *  SMTP HANDLING
  */
 
-static int smtp_passthru(clamsmtp_context_t* ctx)
+static int smtp_passthru(spctx_t* ctx)
 {
-    clio_t* io = NULL;
-    char logline[LINE_LENGTH];
     int r, ret = 0;
+    unsigned int mask;
     int neterror = 0;
 
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
     int filter_ehlo = 0;    /* Filtering parts of an EHLO extensions response */
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
 
-    ASSERT(clio_valid(&(ctx->clam)) &&
-           clio_valid(&(ctx->clam)));
-    logline[0] = 0;
+    ASSERT(spio_valid(&(ctx->client)) &&
+           spio_valid(&(ctx->server)));
 
     for(;;)
     {
-        if(clio_select(ctx, &io) == -1)
+        mask = spio_select(ctx, &(ctx->client), &(ctx->server), NULL);
+
+        if(mask == ~0)
         {
             neterror = 1;
             RETURN(-1);
 		}
 
         /* Client has data available, read a line and process */
-        if(io == &(ctx->client))
+        if(mask & 1)
         {
-            if(clio_read_line(ctx, &(ctx->client), CLIO_DISCARD) == -1)
+            if(spio_read_line(ctx, &(ctx->client), SPIO_DISCARD) == -1)
                 RETURN(-1);
 
             /* Client disconnected, we're done */
@@ -747,7 +741,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             /* We don't let clients send really long lines */
             if(LINE_TOO_LONG(ctx))
             {
-                if(clio_write_data(ctx, &(ctx->client), SMTP_TOOLONG) == -1)
+                if(spio_write_data(ctx, &(ctx->client), SMTP_TOOLONG) == -1)
                     RETURN(-1);
 
                 continue;
@@ -761,7 +755,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             if(is_first_word(ctx->line, DATA_CMD, KL(DATA_CMD)))
             {
                 /* Send back the intermediate response to the client */
-                if(clio_write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
+                if(spio_write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
                     RETURN(-1);
 
                 /*
@@ -769,14 +763,14 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                  * sending of the data to the server, making the av check
                  * transparent
                  */
-                if(avcheck_data(ctx, logline) == -1)
+                if(cb_check_data(ctx) == -1)
                     RETURN(-1);
 
                 /* Print the log out for this email */
-                messagex(ctx, LOG_INFO, "%s", logline);
+                sp_messagex(ctx, LOG_INFO, "%s", ctx->logline);
 
-                /* Reset log line */
-                logline[0] = 0;
+                /* Done with that email */
+                cleanup_context(ctx);
 
                 /* Command handled */
                 continue;
@@ -788,12 +782,12 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
              */
             else if(is_first_word(ctx->line, EHLO_CMD, KL(EHLO_CMD)))
             {
-                messagex(ctx, LOG_DEBUG, "filtering EHLO response");
+                sp_messagex(ctx, LOG_DEBUG, "filtering EHLO response");
                 filter_ehlo = 1;
                 filter_host = 1;
 
-                /* A new message */
-                logline[0] = 0;
+                /* New email so cleanup  */
+                cleanup_context(ctx);
             }
 
             /*
@@ -804,8 +798,8 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             {
                 filter_host = 1;
 
-                /* A new message line */
-                logline[0] = 0;
+                /* A new email so cleanup */
+                cleanup_context(ctx);
             }
 
             /*
@@ -816,9 +810,9 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             else if(is_first_word(ctx->line, STARTTLS_CMD, KL(STARTTLS_CMD)) ||
                     is_first_word(ctx->line, BDAT_CMD, KL(BDAT_CMD)))
             {
-                messagex(ctx, LOG_DEBUG, "ESMTP feature not supported");
+                sp_messagex(ctx, LOG_DEBUG, "ESMTP feature not supported");
 
-                if(clio_write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
+                if(spio_write_data(ctx, &(ctx->client), SMTP_NOTSUPP) == -1)
                     RETURN(-1);
 
                 /* Command handled */
@@ -827,34 +821,34 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
             /* Append recipients to log line */
             else if((r = check_first_word(ctx->line, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
-                add_to_logline(logline, "from=", ctx->line + r);
+                sp_add_log(ctx, "from=", ctx->line + r);
 
             /* Append sender to log line */
             else if((r = check_first_word(ctx->line, TO_CMD, KL(TO_CMD), SMTP_DELIMS)) > 0)
-                add_to_logline(logline, "to=", ctx->line + r);
+                sp_add_log(ctx, "to=", ctx->line + r);
 
             /* Reset log line */
             else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)))
-                logline[0] = 0;
+                cleanup_context(ctx);
 
             /* All other commands just get passed through to server */
-            if(clio_write_data(ctx, &(ctx->server), ctx->line) == -1)
+            if(spio_write_data(ctx, &(ctx->server), ctx->line) == -1)
                 RETURN(-1);
 
             continue;
         }
 
         /* Server has data available, read a line and forward */
-        if(io == &(ctx->server))
+        if(mask & 2)
         {
-            if(clio_read_line(ctx, &(ctx->server), CLIO_DISCARD) == -1)
+            if(spio_read_line(ctx, &(ctx->server), SPIO_DISCARD) == -1)
                 RETURN(-1);
 
             if(ctx->linelen == 0)
                 RETURN(0);
 
             if(LINE_TOO_LONG(ctx))
-                messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
+                sp_messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
 
             /*
              * We intercept the first response we get from the server.
@@ -874,9 +868,9 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
                 if(is_first_word(ctx->line, START_RSP, KL(START_RSP)))
                 {
-                    messagex(ctx, LOG_DEBUG, "intercepting initial response");
+                    sp_messagex(ctx, LOG_DEBUG, "intercepting initial response");
 
-                    if(clio_write_data(ctx, &(ctx->client), SMTP_BANNER) == -1)
+                    if(spio_write_data(ctx, &(ctx->client), SMTP_BANNER) == -1)
                         RETURN(-1);
 
                     /* Command handled */
@@ -896,9 +890,9 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 /* Check for a simple '250 xxxx' */
                 if(is_first_word(ctx->line, OK_RSP, KL(OK_RSP)))
                 {
-                    messagex(ctx, LOG_DEBUG, "intercepting host response");
+                    sp_messagex(ctx, LOG_DEBUG, "intercepting host response");
 
-                    if(clio_write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
+                    if(spio_write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
                         RETURN(-1);
 
                     continue;
@@ -907,9 +901,9 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 /* Check for the continued response '250-xxxx' */
                 if(check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_MULTI_DELIMS) > 0)
                 {
-                    messagex(ctx, LOG_DEBUG, "intercepting host response");
+                    sp_messagex(ctx, LOG_DEBUG, "intercepting host response");
 
-                    if(clio_write_data(ctx, &(ctx->client), SMTP_EHLO_RSP) == -1)
+                    if(spio_write_data(ctx, &(ctx->client), SMTP_EHLO_RSP) == -1)
                         RETURN(-1);
 
                     continue;
@@ -931,13 +925,13 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                        is_first_word(p, ESMTP_BINARY, KL(ESMTP_BINARY)) ||
                        is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)))
                     {
-                        messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space(p));
+                        sp_messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space(p));
                         continue;
                     }
                 }
             }
 
-            if(clio_write_data(ctx, &(ctx->client), ctx->line) == -1)
+            if(spio_write_data(ctx, &(ctx->client), ctx->line) == -1)
                 RETURN(-1);
 
             continue;
@@ -946,427 +940,187 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
 cleanup:
 
-    if(!neterror && ret == -1 && clio_valid(&(ctx->client)))
-       clio_write_data(ctx, &(ctx->client), SMTP_FAILED);
+    if(!neterror && ret == -1 && spio_valid(&(ctx->client)))
+       spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
 
     return ret;
 }
 
-static void add_to_logline(char* logline, char* prefix, char* line)
-{
-    int l = strlen(logline);
-    char* t = logline;
+/* -----------------------------------------------------------------------------
+ *  SMTP PASSTHRU FUNCTIONS FOR DATA CHECK
+ */
 
-    /* Simple optimization */
-    logline += l;
-    l = LINE_LENGTH - l;
+void sp_add_log(spctx_t* ctx, char* prefix, char* line)
+{
+    int l = SP_LINE_LENGTH;
+    char* t = ctx->logline;
 
     ASSERT(l >= 0);
 
     if(t[0] != 0)
-        strlcat(logline, ", ", l);
+        strlcat(ctx->logline, ", ", l);
 
-    strlcat(logline, prefix, l);
+    strlcat(ctx->logline, prefix, l);
 
     /* Skip initial white space */
     line = trim_start(line);
 
-    strlcat(logline, line, l);
+    strlcat(ctx->logline, line, l);
 
     /* Skip later white space */
-    trim_end(logline);
+    trim_end(ctx->logline);
 }
 
-static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
-{
-    /*
-     * Note that most failures are non fatal in this function.
-     * We only return -1 for data connection errors and the like,
-     * For most others we actually send a response back to the
-     * client letting them know what happened and let the SMTP
-     * connection continue.
-     */
-
-    char buf[MAXPATHLEN];
-    int havefile = 0;
-    int r, ret = 0;
-
-    strlcpy(buf, g_state->directory, MAXPATHLEN);
-    strlcat(buf, "/clamsmtpd.XXXXXX", MAXPATHLEN);
-
-    /* transfer_to_file deletes the temp file on failure */
-    if((r = transfer_to_file(ctx, buf)) > 0)
-    {
-        havefile = 1;
-        r = clam_scan_file(ctx, buf, logline);
-    }
-
-    switch(r)
-    {
-
-    /*
-     * There was an error tell the client. We haven't notified
-     * the server about any of this yet
-     */
-    case -1:
-        if(clio_write_data(ctx, &(ctx->client), SMTP_FAILED))
-            RETURN(-1);
-        break;
-
-    /*
-     * No virus was found. Now we initiate a connection to the server
-     * and transfer the file to it.
-     */
-    case 0:
-        if(complete_data_transfer(ctx, buf) == -1)
-            RETURN(-1);
-        break;
-
-    /*
-     * A virus was found, normally we just drop the email. But if
-     * requested we can send a simple message back to our client.
-     * The server doesn't know data was ever sent, and the client can
-     * choose to reset the connection to reuse it if it wants.
-     */
-    case 1:
-        if(clio_write_data(ctx, &(ctx->client),
-                           g_state->bounce ? SMTP_DATAVIRUS : SMTP_DATAVIRUSOK) == -1)
-            RETURN(-1);
-
-        /* Any special post operation actions on the virus */
-        quarantine_virus(ctx, buf);
-        break;
-
-    default:
-        ASSERT(0 && "Invalid clam_scan_file return value");
-        break;
-    };
-
-cleanup:
-    if(havefile && !g_state->debug_files)
-    {
-        messagex(ctx, LOG_DEBUG, "deleting temporary file: %s", buf);
-        unlink(buf);
-    }
-
-    return ret;
-}
-
-static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
+int sp_read_data(spctx_t* ctx, const char** data)
 {
     ASSERT(ctx);
-    ASSERT(tempname);
+    ASSERT(data);
+
+    *data = NULL;
+
+    switch(spio_read_line(ctx, &(ctx->client), SPIO_QUIET))
+    {
+    case 0:
+        sp_messagex(ctx, LOG_ERR, "unexpected end of data from client");
+        return -1;
+    case -1:
+        /* Message already printed */
+        return -1;
+    };
+
+    if(ctx->_crlf && strcmp(ctx->line, DATA_END_SIG) == 0)
+        return 0;
+
+    /* Check if this line ended with a CRLF */
+    ctx->_crlf = (strcmp(CRLF, ctx->line + (ctx->linelen - KL(CRLF))) == 0);
+    *data = ctx->line;
+    return ctx->linelen;
+}
+
+int sp_write_data(spctx_t* ctx, const char* buf, int len)
+{
+    int r = 0;
+
+    ASSERT(ctx);
+
+    /* When a null buffer close the cache file */
+    if(!buf)
+    {
+        if(ctx->cachefile)
+        {
+            if(fclose(ctx->cachefile) == EOF)
+            {
+                sp_message(ctx, LOG_ERR, "couldn't write to cache file: %s", ctx->cachename);
+                r = -1;
+            }
+
+            ctx->cachefile = NULL;
+        }
+
+        return r;
+    }
+
+    /* Make sure we have a file open */
+    if(!ctx->cachefile)
+    {
+        int tfd;
+
+        /* Make sure afore mentioned file is gone */
+        if(ctx->cachename[0])
+            unlink(ctx->cachename);
+
+        snprintf(ctx->cachename, MAXPATHLEN, "%s/%s.XXXXXX",
+                 g_state.directory, g_state.name);
+
+        if((tfd = mkstemp(ctx->cachename)) == -1 ||
+           (ctx->cachefile = fdopen(tfd, "w")) == NULL)
+        {
+            if(tfd != -1)
+                close(tfd);
+
+            sp_message(ctx, LOG_ERR, "couldn't open cache file");
+            return -1;
+        }
+
+        sp_messagex(ctx, LOG_DEBUG, "created cache file: %s", ctx->cachename);
+    }
+
+    fwrite(buf, 1, len, ctx->cachefile);
+
+    if(ferror(ctx->cachefile))
+    {
+        sp_message(ctx, LOG_ERR, "couldn't write to cache file: %s", ctx->cachename);
+        return -1;
+    }
+
+    return len;
+}
+
+int sp_cache_data(spctx_t* ctx)
+{
+    int r, count = 0;
+    const char* data;
+
+    while((r = sp_read_data(ctx, &data)) != 0)
+    {
+        if(r < 0)
+            return -1;  /* Message already printed */
+
+        count += r;
+
+        if((r = sp_write_data(ctx, data, r)) < 0)
+            return -1;  /* Message already printed */
+    }
+
+    /* End the caching */
+    if(sp_write_data(ctx, NULL, 0) < 0)
+        return -1;
+
+    sp_messagex(ctx, LOG_DEBUG, "wrote %d bytes to cache", count);
+    return count;
+}
+
+int sp_done_data(spctx_t* ctx, const char* header)
+{
+    FILE* file = 0;
+    int had_header = 0;
+    int ret = 0;
+
+    ASSERT(ctx->cachename[0]);  /* Must still be around */
+    ASSERT(!ctx->cachefile);    /* File must be closed */
+
+    /* Open the file */
+    file = fopen(ctx->cachename, "r");
+    if(file == NULL)
+    {
+        sp_message(ctx, LOG_ERR, "couldn't open cache file: %s", ctx->cachename);
+        RETURN(-1);
+    }
 
     /* Ask the server for permission to send data */
-    if(clio_write_data(ctx, &(ctx->server), SMTP_DATA) == -1)
-        return -1;
+    if(spio_write_data(ctx, &(ctx->server), SMTP_DATA) == -1)
+        RETURN(-1);
 
     if(read_server_response(ctx) == -1)
-        return -1;
+        RETURN(-1);
 
     /* If server returns an error then tell the client */
     if(!is_first_word(ctx->line, DATA_RSP, KL(DATA_RSP)))
     {
-        if(clio_write_data(ctx, &(ctx->client), ctx->line) == -1)
-            return -1;
-
-        messagex(ctx, LOG_DEBUG, "server refused data transfer");
-
-        return 0;
-    }
-
-    /* Now pull up the file and send it to the server */
-    if(transfer_from_file(ctx, tempname) == -1)
-    {
-        /* Tell the client it went wrong */
-        clio_write_data(ctx, &(ctx->client), SMTP_FAILED);
-        return -1;
-    }
-
-    /* Okay read the response from the server and echo it to the client */
-    if(read_server_response(ctx) == -1)
-        return -1;
-
-    if(clio_write_data(ctx, &(ctx->client), ctx->line) == -1)
-        return -1;
-
-    return 0;
-}
-
-static int read_server_response(clamsmtp_context_t* ctx)
-{
-    /* Read response line from the server */
-    if(clio_read_line(ctx, &(ctx->server), CLIO_DISCARD) == -1)
-        return -1;
-
-    if(ctx->linelen == 0)
-    {
-        messagex(ctx, LOG_ERR, "server disconnected unexpectedly");
-
-        /* Tell the client it went wrong */
-        clio_write_data(ctx, &(ctx->client), SMTP_FAILED);
-        return 0;
-    }
-
-    if(LINE_TOO_LONG(ctx))
-        messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
-
-    return 0;
-}
-
-
-/* ----------------------------------------------------------------------------------
- *  CLAM AV
- */
-
-static int connect_clam(clamsmtp_context_t* ctx)
-{
-    int ret = 0;
-
-    ASSERT(ctx);
-    ASSERT(!clio_valid(&(ctx->clam)));
-
-    if(clio_connect(ctx, &(ctx->clam), &(g_state->clamaddr), g_state->clamname) == -1)
-       RETURN(-1);
-
-    read_junk(ctx, ctx->clam.fd);
-
-    /* Send a session and a check header to ClamAV */
-
-    if(clio_write_data(ctx, &(ctx->clam), "SESSION\n") == -1)
-        RETURN(-1);
-
-    read_junk(ctx, ctx->clam.fd);
-/*
-    if(clio_write_data(ctx, &(ctx->clam), "PING\n") == -1 ||
-       clio_read_line(ctx, &(ctx->clam), CLIO_DISCARD | CLIO_TRIM) == -1)
-        RETURN(-1);
-
-    if(strcmp(ctx->line, CONNECT_RESPONSE) != 0)
-    {
-        message(ctx, LOG_ERR, "clamd sent an unexpected response: %s", ctx->line);
-        RETURN(-1);
-    }
-*/
-
-cleanup:
-
-    if(ret < 0)
-        clio_disconnect(ctx, &(ctx->clam));
-
-    return ret;
-}
-
-static int disconnect_clam(clamsmtp_context_t* ctx)
-{
-    if(!clio_valid(&(ctx->clam)))
-        return 0;
-
-    if(clio_write_data(ctx, &(ctx->clam), CLAM_DISCONNECT) != -1)
-        read_junk(ctx, ctx->clam.fd);
-
-    clio_disconnect(ctx, &(ctx->clam));
-    return 0;
-}
-
-static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* logline)
-{
-    int len;
-
-    ASSERT(LINE_LENGTH > MAXPATHLEN + 32);
-
-    strcpy(ctx->line, CLAM_SCAN);
-    strcat(ctx->line, tempname);
-    strcat(ctx->line, "\n");
-
-    if(clio_write_data(ctx, &(ctx->clam), ctx->line) == -1)
-        return -1;
-
-    len = clio_read_line(ctx, &(ctx->clam), CLIO_DISCARD | CLIO_TRIM);
-    if(len == 0)
-    {
-        messagex(ctx, LOG_ERR, "clamd disconnected unexpectedly");
-        return -1;
-    }
-
-    if(is_last_word(ctx->line, CLAM_OK, KL(CLAM_OK)))
-    {
-        add_to_logline(logline, "status=", "CLEAN");
-        messagex(ctx, LOG_DEBUG, "no virus");
-        return 0;
-    }
-
-    if(is_last_word(ctx->line, CLAM_FOUND, KL(CLAM_FOUND)))
-    {
-        len = strlen(tempname);
-
-        if(ctx->linelen > len)
-            add_to_logline(logline, "status=VIRUS:", ctx->line + len + 1);
-        else
-            add_to_logline(logline, "status=", "VIRUS");
-
-        messagex(ctx, LOG_DEBUG, "found virus");
-        return 1;
-    }
-
-    if(is_last_word(ctx->line, CLAM_ERROR, KL(CLAM_ERROR)))
-    {
-        messagex(ctx, LOG_ERR, "clamav error: %s", ctx->line);
-        add_to_logline(logline, "status=", "CLAMAV-ERROR");
-        return -1;
-    }
-
-    add_to_logline(logline, "status=", "CLAMAV-ERROR");
-    messagex(ctx, LOG_ERR, "unexepected response from clamd: %s", ctx->line);
-    return -1;
-}
-
-
-/* ----------------------------------------------------------------------------------
- *  TEMP FILE HANDLING
- */
-
-static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname)
-{
-    char buf[MAXPATHLEN];
-    char* t;
-
-    if(!g_state->quarantine)
-        return 0;
-
-    strlcpy(buf, g_state->directory, MAXPATHLEN);
-    strlcat(buf, "/virus.", MAXPATHLEN);
-
-    /* Points to null terminator */
-    t = buf + strlen(buf);
-
-    /*
-     * Yes, I know we're using mktemp. And yet we're doing it in
-     * a safe manner due to the link command below not overwriting
-     * existing files.
-     */
-    for(;;)
-    {
-        /* Null terminate off the ending, and replace with X's for mktemp */
-        *t = 0;
-        strlcat(buf, "XXXXXX", MAXPATHLEN);
-
-        if(!mktemp(buf))
-        {
-            message(ctx, LOG_ERR, "couldn't create quarantine file name");
-            return -1;
-        }
-
-        /* Try to link the file over to the temp */
-        if(link(tempname, buf) == -1)
-        {
-            /* We don't want to allow race conditions */
-            if(errno == EEXIST)
-            {
-                message(ctx, LOG_WARNING, "race condition when quarantining virus file: %s", buf);
-                continue;
-            }
-
-            message(ctx, LOG_ERR, "couldn't quarantine virus file");
-            return -1;
-        }
-
-        break;
-    }
-
-    messagex(ctx, LOG_INFO, "quarantined virus file as: %s", buf);
-    return 0;
-}
-
-static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname)
-{
-    FILE* tfile = NULL;
-    int tfd = -1;
-    int ended_crlf = 1;     /* If the last line ended with a CRLF */
-    int ret = 0;
-    int count = 0;
-
-    if((tfd = mkstemp(tempname)) == -1 ||
-       (tfile = fdopen(tfd, "w")) == NULL)
-    {
-        message(ctx, LOG_ERR, "couldn't open temp file");
-        RETURN(-1);
-    }
-
-    messagex(ctx, LOG_DEBUG, "created temporary file: %s", tempname);
-
-    for(;;)
-    {
-        switch(clio_read_line(ctx, &(ctx->client), CLIO_QUIET))
-        {
-        case 0:
-            messagex(ctx, LOG_ERR, "unexpected end of data from client");
+        if(spio_write_data(ctx, &(ctx->client), ctx->line) == -1)
             RETURN(-1);
 
-        case -1:
-            /* Message already printed */
-            RETURN(-1);
-        };
+        sp_messagex(ctx, LOG_DEBUG, "server refused data transfer");
 
-        if(ended_crlf && strcmp(ctx->line, DATA_END_SIG) == 0)
-            break;
-
-        /* We check errors on this later */
-        fwrite(ctx->line, 1, ctx->linelen, tfile);
-        count += ctx->linelen;
-
-        /* Check if this line ended with a CRLF */
-        ended_crlf = (strcmp(CRLF, ctx->line + (ctx->linelen - KL(CRLF))) == 0);
-    }
-
-    if(ferror(tfile))
-    {
-        message(ctx, LOG_ERR, "error writing to temp file: %s", tempname);
         RETURN(-1);
     }
 
-    ret = count;
-    messagex(ctx, LOG_DEBUG, "wrote %d bytes to temp file", count);
+    sp_messagex(ctx, LOG_DEBUG, "sending from cache file: %s", ctx->cachename);
 
-cleanup:
-
-    if(tfile)
-       fclose(tfile);
-
-    if(tfd != -1)
+    /* Transfer actual file data */
+    while(fgets(ctx->line, SP_LINE_LENGTH, file) != NULL)
     {
-        /* Only close this if not opened as a stream */
-        if(tfile == NULL)
-            close(tfd);
-
-        if(ret <= 0)
-        {
-            messagex(ctx, LOG_DEBUG, "discarding temporary file");
-            unlink(tempname);
-        }
-    }
-
-    return ret;
-}
-
-static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
-{
-    FILE* file = NULL;
-    int header = 0;
-    int ret = 0;
-
-    file = fopen(filename, "r");
-    if(file == NULL)
-    {
-        message(ctx, LOG_ERR, "couldn't open temporary file: %s", filename);
-        RETURN(-1);
-    }
-
-    messagex(ctx, LOG_DEBUG, "sending from temporary file: %s", filename);
-
-    while(fgets(ctx->line, LINE_LENGTH, file) != NULL)
-    {
-        if(g_state->header && !header)
+        if(header && !had_header)
         {
             /*
              * The first blank line we see means the headers are done.
@@ -1374,70 +1128,365 @@ static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename)
              */
             if(is_blank_line(ctx->line))
             {
-                if(clio_write_data_raw(ctx, &(ctx->server), (char*)g_state->header, strlen(g_state->header)) == -1 ||
-                   clio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
+                if(spio_write_data_raw(ctx, &(ctx->server), (char*)header, strlen(header)) == -1 ||
+                   spio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
 
-                header = 1;
+                had_header = 1;
             }
         }
 
-        if(clio_write_data_raw(ctx, &(ctx->server), ctx->line, strlen(ctx->line)) == -1)
+        if(spio_write_data_raw(ctx, &(ctx->server), ctx->line, strlen(ctx->line)) == -1)
             RETURN(-1);
     }
 
     if(ferror(file))
+        sp_message(ctx, LOG_ERR, "error reading cache file: %s", ctx->cachename);
+
+    if(ferror(file) || spio_write_data(ctx, &(ctx->server), DATA_END_SIG) == -1)
     {
-        message(ctx, LOG_ERR, "error reading temporary file: %s", filename);
+        /* Tell the client it went wrong */
+        spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
         RETURN(-1);
     }
 
-    if(clio_write_data(ctx, &(ctx->server), DATA_END_SIG) == -1)
+    sp_messagex(ctx, LOG_DEBUG, "sent email data");
+
+    /* Okay read the response from the server and echo it to the client */
+    if(read_server_response(ctx) == -1)
         RETURN(-1);
 
-    messagex(ctx, LOG_DEBUG, "sent email data");
+    if(spio_write_data(ctx, &(ctx->client), ctx->line) == -1)
+        RETURN(-1);
 
 cleanup:
 
-    if(file != NULL)
-        fclose(file);
+    if(file)
+        fclose(file); /* read-only so no error check */
 
     return ret;
 }
 
-
-/* ----------------------------------------------------------------------------------
- *  NETWORKING
- */
-
-static void read_junk(clamsmtp_context_t* ctx, int fd)
+int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 {
-    char buf[16];
-    const char* t;
-    int said = 0;
-    int l;
+    char* t;
+    int len, x;
 
-    if(fd == -1)
-        return;
-
-    /* Make it non blocking */
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-
-    for(;;)
+    if(smtp_status == NULL)
     {
-        l = read(fd, buf, sizeof(buf) - 1);
-        if(l <= 0)
-            break;
+        smtp_status = SMTP_FAILED;
+    }
 
-        buf[l] = 0;
-        t = trim_start(buf);
+    else
+    {
+        len = strlen(smtp_status);
 
-        if(!said && *t)
+        /* We need 3 digits and CRLF at the end for a premade SMTP message */
+        if(strtol(smtp_status, &t, 10) == 0 || t != smtp_status + 3 ||
+           strcmp(smtp_status + (len - KL(CRLF)), CRLF) != 0)
         {
-            messagex(ctx, LOG_DEBUG, "received junk data from daemon");
-            said = 1;
+            if(len > 256)
+                len = 256;
+
+            x = len + KL(SMTP_REJPREFIX) + KL(CRLF) + 1;
+            t = (char*)alloca(x);
+
+            /* Note that we truncate long lines */
+            snprintf(t, x, "%s%.256s%s", SMTP_REJPREFIX, smtp_status, CRLF);
+            smtp_status = t;
         }
     }
 
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK);
+    if(spio_write_data(ctx, &(ctx->client), smtp_status) == -1)
+        return -1;
+
+    return 0;
 }
+
+static int read_server_response(spctx_t* ctx)
+{
+    /* Read response line from the server */
+    if(spio_read_line(ctx, &(ctx->server), SPIO_DISCARD) == -1)
+        return -1;
+
+    if(ctx->linelen == 0)
+    {
+        sp_messagex(ctx, LOG_ERR, "server disconnected unexpectedly");
+
+        /* Tell the client it went wrong */
+        spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
+        return 0;
+    }
+
+    if(LINE_TOO_LONG(ctx))
+        sp_messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
+
+    return 0;
+}
+
+/* ----------------------------------------------------------------------------------
+ *  LOGGING
+ */
+
+const char kMsgDelimiter[] = ": ";
+#define MAX_MSGLEN  256
+
+static void vmessage(spctx_t* ctx, int level, int err,
+                     const char* msg, va_list ap)
+{
+    size_t len;
+    char* m;
+    int e = errno;
+
+    if(g_state.daemonized)
+    {
+        if(level >= LOG_DEBUG)
+            return;
+    }
+    else
+    {
+        if(g_state.debug_level < level)
+            return;
+    }
+
+    ASSERT(msg);
+
+    len = strlen(msg) + 20 + MAX_MSGLEN;
+    m = (char*)alloca(len);
+
+    if(m)
+    {
+        if(ctx)
+            snprintf(m, len, "%06X: %s%s", ctx->id, msg, err ? ": " : "");
+        else
+            snprintf(m, len, "%s%s", msg, err ? ": " : "");
+
+        if(err)
+        {
+            /* TODO: strerror_r doesn't want to work for us
+            strerror_r(e, m + strlen(m), MAX_MSGLEN); */
+            strncat(m, strerror(e), len);
+        }
+
+        m[len - 1] = 0;
+        msg = m;
+    }
+
+    /* Either to syslog or stderr */
+    if(g_state.daemonized)
+        vsyslog(level, msg, ap);
+    else
+        vwarnx(msg, ap);
+}
+
+void sp_messagex(spctx_t* ctx, int level, const char* msg, ...)
+{
+    va_list ap;
+
+    va_start(ap, msg);
+    vmessage(ctx, level, 0, msg, ap);
+    va_end(ap);
+}
+
+void sp_message(spctx_t* ctx, int level, const char* msg, ...)
+{
+    va_list ap;
+
+    va_start(ap, msg);
+    vmessage(ctx, level, 1, msg, ap);
+    va_end(ap);
+}
+
+
+/* -----------------------------------------------------------------------
+ * LOCKING
+ */
+
+void sp_lock()
+{
+    int r;
+
+#ifdef _DEBUG
+    int wait = 0;
+#endif
+
+#ifdef _DEBUG
+    r = pthread_mutex_trylock(&g_mutex);
+    if(r == EBUSY)
+    {
+        wait = 1;
+        sp_message(NULL, LOG_DEBUG, "thread will block: %d", pthread_self());
+        r = pthread_mutex_lock(&g_mutex);
+    }
+
+#else
+    r = pthread_mutex_lock(&g_mutex);
+
+#endif
+
+    if(r != 0)
+    {
+        errno = r;
+        sp_message(NULL, LOG_CRIT, "threading problem. couldn't lock mutex");
+    }
+
+#ifdef _DEBUG
+    else if(wait)
+    {
+        sp_message(NULL, LOG_DEBUG, "thread unblocked: %d", pthread_self());
+    }
+#endif
+}
+
+void sp_unlock()
+{
+    int r = pthread_mutex_unlock(&g_mutex);
+    if(r != 0)
+    {
+        errno = r;
+        sp_message(NULL, LOG_CRIT, "threading problem. couldn't unlock mutex");
+    }
+}
+
+/* -----------------------------------------------------------------------------
+ * CONFIG FILE
+ */
+
+int sp_parse_option(const char* name, const char* value)
+{
+    char* t;
+    int ret = 0;
+
+    if(strcasecmp(CFG_MAXTHREADS, name) == 0)
+    {
+        g_state.max_threads = strtol(value, &t, 10);
+        if(*t || g_state.max_threads <= 1 || g_state.max_threads >= 1024)
+            errx(2, "invalid setting: " CFG_MAXTHREADS " (must be between 1 and 1024)");
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_TIMEOUT, name) == 0)
+    {
+        g_state.timeout.tv_sec = strtol(value, &t, 10);
+        if(*t || g_state.timeout.tv_sec <= 0)
+            errx(2, "invalid setting: " CFG_TIMEOUT);
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_OUTADDR, name) == 0)
+    {
+        if(sock_any_pton(value, &(g_state.outaddr), SANY_OPT_DEFPORT(25)) == -1)
+            errx(2, "invalid " CFG_OUTADDR " socket name or ip: %s", value);
+        g_state.outname = value;
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_LISTENADDR, name) == 0)
+    {
+        if(sock_any_pton(value, &(g_state.listenaddr), SANY_OPT_DEFANY | SANY_OPT_DEFPORT(DEFAULT_PORT)) == -1)
+            errx(2, "invalid " CFG_LISTENADDR " socket name or ip: %s", value);
+        g_state.listenname = value;
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_TRANSPARENT, name) == 0)
+    {
+        if((g_state.transparent = strtob(value)) == -1)
+            errx(2, "invalid value for " CFG_TRANSPARENT);
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_DIRECTORY, name) == 0)
+    {
+        if(strlen(value) == 0)
+            errx(2, "invalid setting: " CFG_DIRECTORY);
+        g_state.directory = value;
+        ret = 1;
+    }
+
+    /* Always pass through to program */
+    if(cb_parse_option(name, value) == 1)
+        ret = 1;
+
+    return ret;
+}
+
+static int parse_config_file(const char* configfile)
+{
+    FILE* f = NULL;
+    long len;
+    char* p;
+    char* t;
+    char* n;
+
+    ASSERT(configfile);
+    ASSERT(!g_state._p);
+
+    f = fopen(configfile, "r");
+    if(f == NULL)
+    {
+        /* Soft errors when default config file and not found */
+        if((errno == ENOENT || errno == ENOTDIR))
+            return -1;
+        else
+            err(1, "couldn't open config file: %s", configfile);
+    }
+
+    /* Figure out size */
+    if(fseek(f, 0, SEEK_END) == -1 || (len = ftell(f)) == -1 || fseek(f, 0, SEEK_SET) == -1)
+        err(1, "couldn't seek config file: %s", configfile);
+
+    if((g_state._p = (char*)malloc(len + 2)) == NULL)
+        errx(1, "out of memory");
+
+    /* And read in one block */
+    if(fread(g_state._p, 1, len, f) != len)
+        err(1, "couldn't read config file: %s", configfile);
+
+    fclose(f);
+    sp_messagex(NULL, LOG_DEBUG, "read config file: %s", configfile);
+
+    /* Double null terminate the data */
+    p = g_state._p;
+    p[len] = 0;
+    p[len + 1] = 0;
+
+    n = g_state._p;
+
+    /* Go through lines and process them */
+    while((t = strchr(n, '\n')) != NULL)
+    {
+        *t = 0;
+        p = n; /* Do this before cleaning below */
+        n = t + 1;
+
+        p = trim_start(p);
+
+        /* Comments and empty lines */
+        if(*p == 0 || *p == '#')
+            continue;
+
+        /* Look for the break between name: value */
+        t = strchr(p, ':');
+        if(t == NULL)
+            errx(2, "invalid config line: %s", p);
+
+        /* Null terminate and split value part */
+        *t = 0;
+        t++;
+
+        t = trim_space(t);
+        p = trim_space(p);
+
+        /* Pass it through our options parsers */
+        if(sp_parse_option(p, t) == 0)
+
+            /* If not recognized then it's invalid */
+            errx(2, "invalid config line: %s", p);
+
+        sp_messagex(NULL, LOG_DEBUG, "parsed option: %s: %s", p, t);
+    }
+
+    return 0;
+}
+

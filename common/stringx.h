@@ -36,11 +36,8 @@
  *
  */
 
-#ifndef __UTIL_H__
-#define __UTIL_H__
-
-void messagex(clamsmtp_context_t* ctx, int level, const char* msg, ...);
-void message(clamsmtp_context_t* ctx, int level, const char* msg, ...);
+#ifndef __STRINGX_H__
+#define __STRINGX_H__
 
 int check_first_word(const char* line, const char* word, int len, char* delims);
 int is_first_word(const char* line, const char* word, int len);
@@ -51,7 +48,6 @@ char* trim_start(const char* data);
 char* trim_end(char* data);
 char* trim_space(char* data);
 
-void plock();
-void punlock();
+int strtob(const char* str);
 
-#endif /* __UTIL_H__ */
+#endif /* __STRINGX_H__ */

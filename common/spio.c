@@ -53,11 +53,15 @@
 #include <fcntl.h>
 #include <syslog.h>
 #include <errno.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <errno.h>
+#include <err.h>
 
 #include "usuals.h"
 #include "sock_any.h"
-#include "clamsmtpd.h"
-#include "util.h"
+#include "stringx.h"
+#include "sppriv.h"
 
 #define MAX_LOG_LINE    79
 #define GET_IO_NAME(io)  ((io)->name ? (io)->name : "???   ")
@@ -70,7 +74,7 @@ static void close_raw(int* fd)
     *fd = -1;
 }
 
-static void log_io_data(clamsmtp_context_t* ctx, clio_t* io, const char* data, int read)
+static void log_io_data(spctx_t* ctx, spio_t* io, const char* data, int read)
 {
     char buf[MAX_LOG_LINE + 1];
     int pos, len;
@@ -90,14 +94,14 @@ static void log_io_data(clamsmtp_context_t* ctx, clio_t* io, const char* data, i
         memcpy(buf, data, len);
         buf[len] = 0;
 
-        messagex(ctx, LOG_DEBUG, "%s%s%s", GET_IO_NAME(io),
+        sp_messagex(ctx, LOG_DEBUG, "%s%s%s", GET_IO_NAME(io),
             read ? " < " : " > ", buf);
 
         data += pos;
     }
 }
 
-void clio_init(clio_t* io, const char* name)
+void spio_init(spio_t* io, const char* name)
 {
     ASSERT(io && name);
     memset(io, 0, sizeof(*io));
@@ -105,7 +109,7 @@ void clio_init(clio_t* io, const char* name)
     io->fd = -1;
 }
 
-int clio_connect(clamsmtp_context_t* ctx, clio_t* io, const struct sockaddr_any* sany,
+int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sany,
                  const char* addrname)
 {
     int ret = 0;
@@ -116,9 +120,9 @@ int clio_connect(clamsmtp_context_t* ctx, clio_t* io, const struct sockaddr_any*
     if((io->fd = socket(SANY_TYPE(*sany), SOCK_STREAM, 0)) == -1)
         RETURN(-1);
 
-    if(setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) == -1 ||
-       setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state->timeout), sizeof(g_state->timeout)) == -1)
-        messagex(ctx, LOG_WARNING, "couldn't set timeouts on connection");
+    if(setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1 ||
+       setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1)
+        sp_messagex(ctx, LOG_WARNING, "couldn't set timeouts on connection");
 
     if(connect(io->fd, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
         RETURN(-1);
@@ -129,89 +133,95 @@ cleanup:
         if(io->fd != -1)
             close(io->fd);
 
-        message(ctx, LOG_ERR, "couldn't connect to: %s", addrname);
+        sp_message(ctx, LOG_ERR, "couldn't connect to: %s", addrname);
         return -1;
     }
 
     ASSERT(io->fd != -1);
-    messagex(ctx, LOG_DEBUG, "%s connected to: %s", GET_IO_NAME(io), addrname);
+    sp_messagex(ctx, LOG_DEBUG, "%s connected to: %s", GET_IO_NAME(io), addrname);
     return 0;
 }
 
-void clio_disconnect(clamsmtp_context_t* ctx, clio_t* io)
+void spio_disconnect(spctx_t* ctx, spio_t* io)
 {
     ASSERT(ctx && io);
 
-    if(clio_valid(io))
+    if(spio_valid(io))
     {
         close_raw(&(io->fd));
-        messagex(ctx, LOG_DEBUG, "%s connection closed", GET_IO_NAME(io));
+        sp_messagex(ctx, LOG_DEBUG, "%s connection closed", GET_IO_NAME(io));
     }
 }
 
-int clio_select(clamsmtp_context_t* ctx, clio_t** io)
+unsigned int spio_select(spctx_t* ctx, ...)
 {
     fd_set mask;
+    spio_t* io;
+    int ret = 0;
+    int i = 0;
+    va_list ap;
 
-    ASSERT(ctx && io);
+    ASSERT(ctx);
     FD_ZERO(&mask);
-    *io = NULL;
 
-    /* First check if buffers have any data */
+    va_start(ap, ctx);
 
-    if(clio_valid(&(ctx->server)))
+    while((io = va_arg(ap, spio_t*)) != NULL)
     {
-        if(ctx->server.buflen > 0)
-        {
-            *io = &(ctx->server);
-            return 0;
-        }
+        /* We can't handle more than 31 args */
+        if(i > (sizeof(int) * 8) - 2)
+            break;
 
-        FD_SET(ctx->server.fd, &mask);
+        /* Check if the buffer has something in it */
+        if(io->_ln > 0)
+            ret |= (1 << i);
+
+        /* Mark for select */
+        FD_SET(io->fd, &mask);
+
+        i++;
     }
 
-    if(clio_valid(&(ctx->client)))
-    {
-        if(ctx->client.buflen > 0)
-        {
-            *io = &(ctx->client);
-            return 0;
-        }
+    va_end(ap);
 
-        FD_SET(ctx->client.fd, &mask);
-    }
+    /* If any buffers had something present, then return */
+    if(ret != 0)
+        return ret;
 
-    /* Select on the above */
-
-    switch(select(FD_SETSIZE, &mask, NULL, NULL, (struct timeval*)&(g_state->timeout)))
+    /* Otherwise wait on more data */
+    switch(select(FD_SETSIZE, &mask, NULL, NULL,
+           (struct timeval*)&(g_state.timeout)))
     {
     case 0:
-        messagex(ctx, LOG_ERR, "network operation timed out");
-        return -1;
+        sp_messagex(ctx, LOG_ERR, "network operation timed out");
+        return ~0;
     case -1:
-        message(ctx, LOG_ERR, "couldn't select on sockets");
-        return -1;
+        sp_message(ctx, LOG_ERR, "couldn't select on sockets");
+        return ~0;
     };
 
     /* See what came in */
+    i = 0;
 
-    if(FD_ISSET(ctx->server.fd, &mask))
+    va_start(ap, ctx);
+
+    while((io = va_arg(ap, spio_t*)) != NULL)
     {
-        *io = &(ctx->server);
-        return 0;
+        /* We can't handle more than 31 args */
+        if(i > (sizeof(int) * 8) - 2)
+            break;
+
+        /* Check if the buffer has something in it */
+        if(FD_ISSET(io->fd, &mask))
+            ret |= (1 << i);
+
+        i++;
     }
 
-    if(FD_ISSET(ctx->client.fd, &mask))
-    {
-        *io = &(ctx->client);
-        return 0;
-    }
-
-    ASSERT(0 && "invalid result from select");
-    return -1;
+    return ret;
 }
 
-int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
+int spio_read_line(spctx_t* ctx, spio_t* io, int opts)
 {
     int l, x;
     char* t;
@@ -219,32 +229,32 @@ int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
 
     ASSERT(ctx && io);
 
-    if(!clio_valid(io))
+    if(!spio_valid(io))
     {
-        messagex(ctx, LOG_WARNING, "tried to read from a closed connection");
+        sp_messagex(ctx, LOG_WARNING, "tried to read from a closed connection");
         return 0;
     }
 
     ctx->line[0] = 0;
     t = ctx->line;
-    l = LINE_LENGTH - 1;
+    l = SP_LINE_LENGTH - 1;
 
     for(;;)
     {
         /* refil buffer if necessary */
-        if(io->buflen == 0)
+        if(io->_ln == 0)
         {
             ASSERT(io->fd != -1);
-            io->buflen = read(io->fd, io->buf, sizeof(char) * BUF_LEN);
+            io->_ln = read(io->fd, io->_bf, sizeof(char) * SPIO_BUFLEN);
 
-            if(io->buflen == -1)
+            if(io->_ln == -1)
             {
-                io->buflen = 0;
+                io->_ln = 0;
 
                 if(errno == EINTR)
                 {
                     /* When the application is quiting */
-                    if(g_state->quit)
+                    if(sp_is_quit())
                         return -1;
 
                     /* For any other signal we go again */
@@ -252,11 +262,11 @@ int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
                 }
 
                 if(errno == ECONNRESET) /* Not usually a big deal so supresse the error */
-                    messagex(ctx, LOG_DEBUG, "connection disconnected by peer: %s", GET_IO_NAME(io));
+                    sp_messagex(ctx, LOG_DEBUG, "connection disconnected by peer: %s", GET_IO_NAME(io));
                 else if(errno == EAGAIN)
-                    messagex(ctx, LOG_WARNING, "network read operation timed out: %s", GET_IO_NAME(io));
+                    sp_messagex(ctx, LOG_WARNING, "network read operation timed out: %s", GET_IO_NAME(io));
                 else
-                    message(ctx, LOG_ERR, "couldn't read data from socket: %s", GET_IO_NAME(io));
+                    sp_message(ctx, LOG_ERR, "couldn't read data from socket: %s", GET_IO_NAME(io));
 
                 /*
                  * The basic logic here is that if we've had a fatal error
@@ -270,50 +280,50 @@ int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
         }
 
         /* End of data */
-        if(io->buflen == 0)
+        if(io->_ln == 0)
             break;
 
         /* Check for a new line */
-        p = (unsigned char*)memchr(io->buf, '\n', io->buflen);
+        p = (unsigned char*)memchr(io->_bf, '\n', io->_ln);
 
         if(p != NULL)
         {
-            x = (p - io->buf) + 1;
-            io->buflen -= x;
+            x = (p - io->_bf) + 1;
+            io->_ln -= x;
         }
 
         else
         {
-            x = io->buflen;
-            io->buflen = 0;
+            x = io->_ln;
+            io->_ln = 0;
         }
 
         if(x > l)
            x = l;
 
         /* Copy from buffer line */
-        memcpy(t, io->buf, x);
+        memcpy(t, io->_bf, x);
         t += x;
         l -= x;
 
         /* Move whatever we have in the buffer to the front */
-        if(io->buflen > 0)
-            memmove(io->buf, io->buf + x, io->buflen);
+        if(io->_ln > 0)
+            memmove(io->_bf, io->_bf + x, io->_ln);
 
         /* Found a new line, done */
         if(p != NULL)
             break;
 
         /* If discarding then don't break when full */
-        if(!(opts && CLIO_DISCARD) && l == 0)
+        if(!(opts && SPIO_DISCARD) && l == 0)
             break;
     }
 
-    ctx->linelen = (LINE_LENGTH - l) - 1;
-    ASSERT(ctx->linelen < LINE_LENGTH);
+    ctx->linelen = (SP_LINE_LENGTH - l) - 1;
+    ASSERT(ctx->linelen < SP_LINE_LENGTH);
     ctx->line[ctx->linelen] = 0;
 
-    if(opts & CLIO_TRIM && ctx->linelen > 0)
+    if(opts & SPIO_TRIM && ctx->linelen > 0)
     {
         t = ctx->line;
 
@@ -335,28 +345,28 @@ int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int opts)
         }
     }
 
-    if(!(opts & CLIO_QUIET))
+    if(!(opts & SPIO_QUIET))
         log_io_data(ctx, io, ctx->line, 1);
 
     return ctx->linelen;
 }
 
-int clio_write_data(clamsmtp_context_t* ctx, clio_t* io, const char* data)
+int spio_write_data(spctx_t* ctx, spio_t* io, const char* data)
 {
     int len = strlen(data);
     ASSERT(ctx && io && data);
 
-    if(!clio_valid(io))
+    if(!spio_valid(io))
     {
-        message(ctx, LOG_ERR, "connection closed. can't write data.");
+        sp_message(ctx, LOG_ERR, "connection closed. can't write data.");
         return -1;
     }
 
     log_io_data(ctx, io, data, 0);
-    return clio_write_data_raw(ctx, io, (unsigned char*)data, len);
+    return spio_write_data_raw(ctx, io, (unsigned char*)data, len);
 }
 
-int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf, int len)
+int spio_write_data_raw(spctx_t* ctx, spio_t* io, unsigned char* buf, int len)
 {
     int r;
 
@@ -380,7 +390,7 @@ int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf,
             if(errno == EINTR)
             {
                 /* When the application is quiting */
-                if(g_state->quit)
+                if(sp_is_quit())
                     return -1;
 
                 /* For any other signal we go again */
@@ -395,13 +405,51 @@ int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf,
             close_raw(&(io->fd));
 
             if(errno == EAGAIN)
-                messagex(ctx, LOG_WARNING, "network write operation timed out: %s", GET_IO_NAME(io));
+                sp_messagex(ctx, LOG_WARNING, "network write operation timed out: %s", GET_IO_NAME(io));
             else
-                message(ctx, LOG_ERR, "couldn't write data to socket: %s", GET_IO_NAME(io));
+                sp_message(ctx, LOG_ERR, "couldn't write data to socket: %s", GET_IO_NAME(io));
 
             return -1;
         }
     }
 
     return 0;
+}
+
+void spio_read_junk(spctx_t* ctx, spio_t* io)
+{
+    char buf[16];
+    const char* t;
+    int said = 0;
+    int l;
+
+    ASSERT(ctx);
+    ASSERT(io);
+
+    /* Truncate any data in buffer */
+    io->_ln = 0;
+
+    if(!spio_valid(io))
+        return;
+
+    /* Make it non blocking */
+    fcntl(io->fd, F_SETFL, fcntl(io->fd, F_GETFL, 0) | O_NONBLOCK);
+
+    for(;;)
+    {
+        l = read(io->fd, buf, sizeof(buf) - 1);
+        if(l <= 0)
+            break;
+
+        buf[l] = 0;
+        t = trim_start(buf);
+
+        if(!said && *t)
+        {
+            sp_messagex(ctx, LOG_DEBUG, "received junk data from daemon");
+            said = 1;
+        }
+    }
+
+    fcntl(io->fd, F_SETFL, fcntl(io->fd, F_GETFL, 0) & ~O_NONBLOCK);
 }

@@ -36,25 +36,61 @@
  *
  */
 
-#ifndef __CLAMSMTPD_H__
-#define __CLAMSMTPD_H__
+#ifndef __SMTPPASS_H__
+#define __SMTPPASS_H__
 
-#include <sock_any.h>
+/* Forward declarations */
+struct sockaddr_any;
+struct spctx;
 
-/* IO Buffers see clio.c ---------------------------------------------------- */
+/* -----------------------------------------------------------------------------
+ * BUFFERED MULTIPLEXING IO
+ *
+ * This isn't meant to be a replacement library for all sorts of IO
+ * only things that are currently used go here.
+ */
 
-#define BUF_LEN 256
-
-typedef struct clio
+typedef struct spio
 {
-    int fd;
-    const char* name;
-    unsigned char buf[BUF_LEN];
-    size_t buflen;
+    int fd;                             /* The file descriptor wrapped */
+    const char* name;                   /* The name for logging */
+    #define SPIO_BUFLEN 256
+    unsigned char _bf[SPIO_BUFLEN];
+    size_t _ln;
 }
-clio_t;
+spio_t;
 
-/* The main context --------------------------------------------------------- */
+#define SPIO_TRIM           0x00000001
+#define SPIO_DISCARD        0x00000002
+#define SPIO_QUIET          0x00000004
+
+#define spio_valid(io)      ((io)->fd != -1)
+
+/* Setup the io structure (allocated elsewhere */
+void spio_init(spio_t* io, const char* name);
+
+/* Connect and disconnect from sockets */
+int  spio_connect(struct spctx* ctx, spio_t* io, const struct sockaddr_any* sany, const char* addrname);
+void spio_disconnect(struct spctx* ctx, spio_t* io);
+
+/* Read a line from a socket. Use options above */
+int  spio_read_line(struct spctx* ctx, spio_t* io, int opts);
+
+/* Write data to socket (must supply line endings if needed).
+ * Guaranteed to accept all data or fail. */
+int  spio_write_data(struct spctx* ctx, spio_t* io, const char* data);
+int  spio_write_data_raw(struct spctx* ctx, spio_t* io, unsigned char* buf, int len);
+
+/* Empty the given socket */
+void spio_read_junk(struct spctx* sp, spio_t* io);
+
+/* Pass up to 31 spio_t*, followed by NULL. Returns bitmap of ready for reading */
+unsigned int  spio_select(struct spctx* ctx, ...);
+
+
+/* -----------------------------------------------------------------------------
+ * SMTP PASS THROUGH FUNCTIONALITY
+ */
 
 /*
  * A generous maximum line length. It needs to be longer than
@@ -63,83 +99,163 @@ clio_t;
  */
 
 #if 2000 > MAXPATHLEN
-    #define LINE_LENGTH 2000
+    #define SP_LINE_LENGTH 2000
 #else
-    #define LINE_LENGTH (MAXPATHLEN + 128)
+    #define SP_LINE_LENGTH (MAXPATHLEN + 128)
 #endif
 
-typedef struct clamsmtp_context
+typedef struct spctx
 {
-    unsigned int id;        /* Identifier for the connection */
+    unsigned int id;                /* Identifier for the connection */
 
-    clio_t client;          /* Connection to client */
-    clio_t server;          /* Connection to server */
-    clio_t clam;            /* Connection to clamd */
+    spio_t client;                  /* Connection to client */
+    spio_t server;                  /* Connection to server */
 
-    char line[LINE_LENGTH]; /* Working buffer */
-    int linelen;            /* Length of valid data in above */
+    char logline[SP_LINE_LENGTH];   /* Log line */
+    char line[SP_LINE_LENGTH];      /* Working buffer */
+    int  linelen;                   /* Length of valid data in above */
+
+    FILE* cachefile;                /* The file handle for the cached file */
+    char cachename[MAXPATHLEN];     /* The name of the file that we cache into */
+
+    int _crlf;                      /* Private data */
 }
-clamsmtp_context_t;
+spctx_t;
 
-#define LINE_TOO_LONG(ctx)      ((ctx)->linelen >= (LINE_LENGTH - 2))
-#define RETURN(x)               { ret = x; goto cleanup; }
+/*
+ * sp_init initializes the SMTP Pass-Through functionality
+ * The name passed is the name of the app
+ */
+void sp_init(const char* name);
+
+/*
+ * This starts up the smtp pass thru program. It will call
+ * the cb_* functions as appropriate.
+ */
+int sp_run(const char* configfile, const char* pidfile, int dbg_level);
+
+/*
+ * Mark the application as shutting down.
+ * A signal will interupt most IO.
+ */
+void sp_quit();
+
+/*
+ * Check if the application has been marked to quit.
+ * Useful for checking after interupted IO.
+ */
+int sp_is_quit();
+
+/*
+ * Called to cleanup SMTP Pass-Through functionality just
+ * before the application quits.
+ */
+void sp_done();
+
+/*
+ * clamsmtpd used to accept command line args. In order to
+ * process those args it needs to send the values to the
+ * config file routines. This is how it does that.
+ */
+#ifdef SP_LEGACY_OPTIONS
+int sp_parse_option(const char* name, const char* option);
+#endif
 
 
-/* Implemented in clio.c ---------------------------------------------------- */
+/*
+ * The following functions are to be called from within
+ * the spc_check_data function.
+ */
 
-#define CLIO_TRIM           0x00000001
-#define CLIO_DISCARD        0x00000002
-#define CLIO_QUIET          0x00000004
-#define clio_valid(io)      ((io)->fd != -1)
+/*
+ * Adds a piece of info to the log line
+ */
+void sp_add_log(spctx_t* ctx, char* prefix, char* line);
 
-void clio_init(clio_t* io, const char* name);
-int clio_connect(clamsmtp_context_t* ctx, clio_t* io, const struct sockaddr_any* sany, const char* addrname);
-void clio_disconnect(clamsmtp_context_t* ctx, clio_t* io);
-int clio_select(clamsmtp_context_t* ctx, clio_t** io);
-int clio_read_line(clamsmtp_context_t* ctx, clio_t* io, int trim);
-int clio_write_data(clamsmtp_context_t* ctx, clio_t* io, const char* data);
-int clio_write_data_raw(clamsmtp_context_t* ctx, clio_t* io, unsigned char* buf, int len);
+/*
+ * Reads a line of DATA from client. Or less than a line if
+ * line is longer than LINE_LENGTH. No trimming or anything
+ * is done on the read line. This will end automatically
+ * when <CRLF>.<CRLF> is detected (in which case 0 will
+ * be returned). The data is returned in data.
+ */
+int sp_read_data(spctx_t* ctx, const char** data);
+
+/*
+ * Writes a line (or piece) of data to a file buffer which is
+ * later sent to the client using sp_done_data. Calling it with
+ * a NULL buffer closes the cache file. Guaranteed to accept
+ * all data given to it or fail.
+ */
+int sp_write_data(spctx_t* ctx, const char* buf, int buflen);
+
+/*
+ * Sends all DATA from the client into the cache. The cache
+ * file is then available (in spctx_t->cachename) for use.
+ */
+int sp_cache_data(spctx_t* ctx);
+
+/*
+ * Sends the data in file buffer off to server. This is
+ * completes a successful mail transfer. The optional header
+ * is appended to the end of the email headers.
+ */
+int sp_done_data(spctx_t* ctx, const char* header);
+
+/*
+ * Fails the data, deletes any temp data, and sends given
+ * status to client or if NULL then SMTP_DATAFAILED
+ */
+int sp_fail_data(spctx_t* ctx, const char* smtp_status);
+
+/*
+ * Log a message. levels are syslog levels. Syntax is just
+ * like printf etc.. Can specify a ctx of NULL in which case
+ * no connection prefix is prepended.
+ */
+void sp_message(spctx_t* ctx, int level, const char* msg, ...);
+void sp_messagex(spctx_t* ctx, int level, const char* msg, ...);
+
+/*
+ * Lock or unlock the main mutex around thread common
+ * functionality.
+ */
+void sp_lock();
+void sp_unlock();
 
 
-/* Implemented in clstate.c ------------------------------------------------ */
+/* -----------------------------------------------------------------------------
+ * CALLBACKS IMPLMEMENTED BY PROGRAM
+ */
 
-typedef struct clstate
-{
-	/* Settings ------------------------------- */
-	int debug_level;				/* The level to print stuff to console */
-	int max_threads;				/* Maximum number of threads to process at once */
-	struct timeval timeout;			/* Timeout for communication */
+/*
+ * The following functions create and destroy contexts for a new
+ * thread. Perform initialization in there and return a spctx
+ * structure for the thread to use. Return NULL failed. Be sure
+ * to log message.
+ */
+extern spctx_t* cb_new_context();
+extern void cb_del_context(spctx_t* ctx);
 
-	struct sockaddr_any outaddr;	/* The outgoing address */
-	const char* outname;
-	struct sockaddr_any clamaddr;   /* Address for connecting to clamd */
-	const char* clamname;
-	struct sockaddr_any listenaddr; /* Address to listen on */
-    const char* listenname;
+/*
+ * Called when the data section of an email is being transferred.
+ * Once inside this function you can transfer files using
+ * sp_read_data, sp_write_data.
+ *
+ * After scanning or figuring out the status call either
+ * sp_done_data or sp_fail_data. Most failures should be handled
+ * internally using sp_fail_data, unless it's an out of memory
+ * condition, or sp_fail_data failed.
+ */
+extern int cb_check_data(spctx_t* ctx);
 
-	const char* header;	            /* The header to add to email */
-	const char* directory;     		/* The directory for temp files */
-	int bounce;                     /* Send back a reject line */
-	int quarantine;                 /* Leave virus files in temp dir */
-	int debug_files;                /* Leave all files in temp dir */
-    int transparent;                /* Transparent proxying */
+/*
+ * Parse options from the config file. The memory for these
+ * options will stay around until sp_done is called. Return 0
+ * for unrecognized options, 1 for recognized, and quit the
+ * program for invalid.
+ */
+extern int cb_parse_option(const char* name, const char* value);
 
-	/* State --------------------------------- */
-	int daemonized; 			/* Whether process is daemonized or not */
-	pthread_mutex_t mutex;    	/* The main mutex */
-	int quit;					/* Quit the process */
 
-	/* Internal Use ------------------------- */
-	char* _p;
-    pthread_mutexattr_t _mtxattr;
-}
-clstate_t;
-
-extern const clstate_t* g_state;
-
-void clstate_init(clstate_t* state);
-int clstate_parse_config(clstate_t* state, const char* configfile);
-void clstate_validate(clstate_t* state);
-void clstate_cleanup(clstate_t* state);
-
-#endif /* __CLAMSMTPD_H__ */
+#endif /* __SMTPPASS_H__ */

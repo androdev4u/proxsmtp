@@ -465,6 +465,8 @@ static void connection_loop(int sock)
            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) < 0)
             sp_message(NULL, LOG_WARNING, "couldn't set timeouts on incoming connection");
 
+        fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
+
         /* Look for thread and also clean up others */
         for(i = 0; i < g_state.max_threads; i++)
         {
@@ -1333,7 +1335,7 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 
     if(pref || crlf)
     {
-        x = (x > 256 ? 256 : x) + KL(SMTP_REJPREFIX) + KL(CRLF) + 1;
+        x = (len > 256 ? 256 : len) + KL(SMTP_REJPREFIX) + KL(CRLF) + 1;
         t = (char*)alloca(x + 1);
 
         /* Note that we truncate long lines */
@@ -1372,8 +1374,17 @@ static int read_server_response(spctx_t* ctx)
     return 0;
 }
 
-void sp_setup_env(spctx_t* ctx, int file)
+void sp_setup_forked(spctx_t* ctx, int file)
 {
+    /* Signals we've messed with */
+    signal(SIGPIPE, SIG_DFL);
+    signal(SIGHUP,  SIG_DFL);
+    signal(SIGINT,  SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
+
+    siginterrupt(SIGINT, 0);
+    siginterrupt(SIGTERM, 0);
+
     if(ctx->sender)
         setenv("SENDER", ctx->sender, 1);
 

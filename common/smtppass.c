@@ -843,7 +843,7 @@ static int smtp_passthru(spctx_t* ctx)
 
             /*
              * At this point we may want to send our XCLIENT. This is a per
-             * connection command, lasts until a RSET.
+             * connection command.
              */
             if(xclient_sup && !xclient_sent && g_state.xclient)
             {

@@ -372,11 +372,9 @@ static void drop_privileges()
         if(pw == NULL)
             errx(1, "couldn't look up user: %s", g_state.user);
 
-        if(setgid(pw->pw_gid) == -1)
-            err(1, "unable to switch group: %d", pw->pw_gid);
-
-        if(setuid(pw->pw_uid) == -1)
-            err(1, "unable to switch user: %d", pw->pw_uid);
+        if(setgid(pw->pw_gid) == -1 ||
+           setuid(pw->pw_uid) == -1)
+            err(1, "unable to switch to user: %s (uid %d, gid %d)", g_state.user, pw->pw_uid, pw->pw_gid);
 
         /* A paranoia check */
         if(setreuid(-1, 0) == 0)
@@ -1421,7 +1419,10 @@ static void vmessage(spctx_t* ctx, int level, int err,
         {
             /* TODO: strerror_r doesn't want to work for us
             strerror_r(e, m + strlen(m), MAX_MSGLEN); */
-            strncat(m, strerror(e), len);
+
+            sp_lock();
+                strncat(m, strerror(e), len);
+            sp_unlock();
         }
 
         m[len - 1] = 0;

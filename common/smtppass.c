@@ -58,7 +58,7 @@
 #include "util.h"
 
 /* -----------------------------------------------------------------------
- * Structures
+ *  STRUCTURES
  */
 
 typedef struct clamsmtp_thread
@@ -72,7 +72,7 @@ clamsmtp_thread_t;
 #define RETURN(x)               { ret = x; goto cleanup; }
 
 /* -----------------------------------------------------------------------
- * Strings
+ *  STRINGS
  */
 
 #define KL(s)               ((sizeof(s) - 1) / sizeof(char))
@@ -117,17 +117,18 @@ clamsmtp_thread_t;
 #define CLAM_DISCONNECT     "END\n"
 
 /* -----------------------------------------------------------------------
- * Default Settings
+ *  DEFAULT SETTINGS
  */
 
 #define DEFAULT_SOCKET  "10025"
+#define DEFAULT_PORT    10025
 #define DEFAULT_CLAMAV  "/var/run/clamav/clamd"
 #define DEFAULT_MAXTHREADS  64
 #define DEFAULT_TIMEOUT	180
 #define DEFAULT_HEADER  "X-AV-Checked: ClamAV using ClamSMTP\r\n"
 
 /* -----------------------------------------------------------------------
- * Globals
+ *  GLOBALS
  */
 
 int g_daemonized = 0;                     /* Currently running as a daemon */
@@ -155,7 +156,7 @@ pthread_mutexattr_t g_mutexattr;
 
 
 /* -----------------------------------------------------------------------
- * Forward Declarations
+ *  FORWARD DECLARATIONS
  */
 
 static usage();
@@ -174,11 +175,16 @@ static int transfer_to_file(clamsmtp_context_t* ctx, char* tempname);
 static int transfer_from_file(clamsmtp_context_t* ctx, const char* filename);
 static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* logline);
 static int read_server_response(clamsmtp_context_t* ctx);
+static int connect_socket(clamsmtp_context_t* ctx, struct sockaddr_any* sany, const char* addrname);
 static void read_junk(clamsmtp_context_t* ctx, int fd);
 static int read_line(clamsmtp_context_t* ctx, int* fd, int trim);
 static int write_data(clamsmtp_context_t* ctx, int* fd, unsigned char* buf);
 static int write_data_raw(clamsmtp_context_t* ctx, int* fd, unsigned char* buf, int len);
 
+
+/* ----------------------------------------------------------------------------------
+ *  STARTUP ETC...
+ */
 
 int main(int argc, char* argv[])
 {
@@ -277,7 +283,7 @@ int main(int argc, char* argv[])
     messagex(NULL, LOG_DEBUG, "starting up...");
 
     /* Parse all the addresses */
-    if(sock_any_pton(listensock, &addr, SANY_OPT_DEFANY) == -1)
+    if(sock_any_pton(listensock, &addr, SANY_OPT_DEFANY | SANY_OPT_DEFPORT(DEFAULT_PORT)) == -1)
         errx(1, "invalid listen socket name or ip: %s", listensock);
     if(sock_any_pton(g_outname, &g_outaddr, SANY_OPT_DEFPORT(25)) == -1)
         errx(1, "invalid connect socket name or ip: %s", g_outname);
@@ -344,6 +350,54 @@ int main(int argc, char* argv[])
     return 0;
 }
 
+static void on_quit(int signal)
+{
+    g_quit = 1;
+
+    /* fprintf(stderr, "clamsmtpd: got signal to quit\n"); */
+}
+
+static int usage()
+{
+    fprintf(stderr, "clamsmtpd [-bq] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
+            "[-l listenaddr] [-m maxconn] [-p pidfile] [-t timeout] serveraddr\n");
+    exit(2);
+}
+
+static void pid_file(const char* pidfile, int write)
+{
+    if(write)
+    {
+        FILE* f = fopen(pidfile, "w");
+        if(f == NULL)
+        {
+            message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
+        }
+        else
+        {
+            fprintf(f, "%d\n", (int)getpid());
+
+            if(ferror(f))
+                message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
+
+            fclose(f);
+        }
+
+        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
+    }
+
+    else
+    {
+        unlink(pidfile);
+        messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
+    }
+}
+
+
+/* ----------------------------------------------------------------------------------
+ *  CONNECTION HANDLING
+ */
+
 static void connection_loop(int sock)
 {
     clamsmtp_thread_t* threads = NULL;
@@ -388,6 +442,11 @@ static void connection_loop(int sock)
 
             continue;
         }
+
+        /* Set timeouts on client */
+        if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &g_timeout, sizeof(g_timeout)) < 0 ||
+           setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &g_timeout, sizeof(g_timeout)) < 0)
+            message(NULL, LOG_WARNING, "couldn't set timeouts on incoming connection");
 
         /* Look for thread and also clean up others */
         for(i = 0; i < g_maxthreads; i++)
@@ -458,49 +517,6 @@ static void connection_loop(int sock)
     pthread_mutexattr_destroy(&g_mutexattr);
 }
 
-static void on_quit(int signal)
-{
-    g_quit = 1;
-
-    /* fprintf(stderr, "clamsmtpd: got signal to quit\n"); */
-}
-
-static int usage()
-{
-    fprintf(stderr, "clamsmtpd [-bq] [-c clamaddr] [-d debuglevel] [-D tmpdir] [-h header] "
-            "[-l listenaddr] [-m maxconn] [-p pidfile] [-t timeout] serveraddr\n");
-    exit(2);
-}
-
-static void pid_file(const char* pidfile, int write)
-{
-    if(write)
-    {
-        FILE* f = fopen(pidfile, "w");
-        if(f == NULL)
-        {
-            message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
-        }
-        else
-        {
-            fprintf(f, "%d\n", (int)getpid());
-
-            if(ferror(f))
-                message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
-
-            fclose(f);
-        }
-
-        messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
-    }
-
-    else
-    {
-        unlink(pidfile);
-        messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
-    }
-}
-
 static void* thread_main(void* arg)
 {
     clamsmtp_thread_t* thread = (clamsmtp_thread_t*)arg;
@@ -509,6 +525,7 @@ static void* thread_main(void* arg)
     const char* outname;
     char buf[MAXPATHLEN];
     clamsmtp_context_t ctx;
+    int processing = 0;
     int ret = 0;
 
     ASSERT(thread);
@@ -561,21 +578,16 @@ static void* thread_main(void* arg)
 
 
     /* Connect to the server */
-    if((ctx.server = socket(SANY_TYPE(*outaddr), SOCK_STREAM, 0)) < 0 ||
-        connect(ctx.server, &SANY_ADDR(*outaddr), SANY_LEN(*outaddr)) < 0)
-    {
-        message(&ctx, LOG_ERR, "couldn't connect to %s", outname);
+    if((ctx.server = connect_socket(&ctx, outaddr, outname)) == -1)
         RETURN(-1);
-    }
 
-    messagex(&ctx, LOG_DEBUG, "connected to server: %s", outname);
-
-
+    /* ... and to the AV daemon */
     if(connect_clam(&ctx) == -1)
         RETURN(-1);
 
 
     /* call the processor */
+    processing = 1;
     ret = smtp_passthru(&ctx);
 
 cleanup:
@@ -583,7 +595,7 @@ cleanup:
     disconnect_clam(&ctx);
 
     /* Let the client know about fatal errors */
-    if(ret == -1 && ctx.client != -1)
+    if(!processing && ret == -1 && ctx.client != -1)
        write_data(&ctx, &(ctx.client), SMTP_STARTFAILED);
 
     if(ctx.client != -1)
@@ -606,12 +618,18 @@ cleanup:
     return (void*)(ret == 0 ? 0 : 1);
 }
 
+
+/* ----------------------------------------------------------------------------------
+ *  SMTP HANDLING
+ */
+
 static int smtp_passthru(clamsmtp_context_t* ctx)
 {
     char logline[LINE_LENGTH];
     int r, ret = 0;
     int first_rsp = 1;
 	fd_set mask;
+    int neterror = 0;
 
     ASSERT(ctx->clam != -1 && ctx->server != -1);
     logline[0] = 0;
@@ -627,9 +645,11 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 		{
 		case 0:
 			messagex(ctx, LOG_ERR, "network operation timed out");
+            neterror = 1;
             RETURN(-1);
 		case -1:
 			message(ctx, LOG_ERR, "couldn't select on sockets");
+            neterror = 1;
             RETURN(-1);
 		};
 
@@ -764,7 +784,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
 
 cleanup:
 
-    if(ret == -1 && ctx->client != -1)
+    if(!neterror && ret == -1 && ctx->client != -1)
        write_data(ctx, &(ctx->client), SMTP_FAILED);
 
     return ret;
@@ -796,120 +816,6 @@ static void add_to_logline(char* logline, char* prefix, char* line)
     /* Skip later white space */
     while(t > logline && isspace(*(t - 1)))
         *(--t) = 0;
-}
-
-static int connect_clam(clamsmtp_context_t* ctx)
-{
-    int r, len = -1;
-    int ret = 0;
-
-    ASSERT(ctx);
-    ASSERT(ctx->clam == -1);
-
-    if((ctx->clam = socket(SANY_TYPE(g_clamaddr), SOCK_STREAM, 0)) < 0 ||
-       connect(ctx->clam, &SANY_ADDR(g_clamaddr), SANY_LEN(g_clamaddr)) < 0)
-    {
-        message(ctx, LOG_ERR, "couldn't connect to clamd at %s", g_clamname);
-        RETURN(-1);
-    }
-
-    read_junk(ctx, ctx->clam);
-
-    /* Send a session and a check header to ClamAV */
-
-    if(write_data(ctx, &(ctx->clam), "SESSION\n") == -1)
-        RETURN(-1);
-
-    read_junk(ctx, ctx->clam);
-/*
-    if(write_data(ctx, &(ctx->clam), "PING\n") == -1 ||
-       read_line(ctx, &(ctx->clam), 1) == -1)
-        RETURN(-1);
-
-    if(strcmp(ctx->line, CONNECT_RESPONSE) != 0)
-    {
-        message(ctx, LOG_ERR, "clamd sent an unexpected response: %s", ctx->line);
-        RETURN(-1);
-    }
-*/
-    messagex(ctx, LOG_DEBUG, "connected to clamd: %s", g_clamname);
-
-cleanup:
-
-    if(ret < 0)
-    {
-        if(ctx->clam != -1)
-        {
-            shutdown(ctx->clam, SHUT_RDWR);
-            ctx->clam = -1;
-        }
-    }
-
-    return ret;
-}
-
-static int disconnect_clam(clamsmtp_context_t* ctx)
-{
-    if(ctx->clam == -1)
-        return 0;
-
-    if(write_data(ctx, &(ctx->clam), CLAM_DISCONNECT) != -1)
-        read_junk(ctx, ctx->clam);
-
-    shutdown(ctx->clam, SHUT_RDWR);
-    messagex(ctx, LOG_DEBUG, "disconnected from clamd");
-    ctx->clam = -1;
-    return 0;
-}
-
-static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* logline)
-{
-    int len;
-
-    ASSERT(LINE_LENGTH > MAXPATHLEN + 32);
-
-    strcpy(ctx->line, CLAM_SCAN);
-    strcat(ctx->line, tempname);
-    strcat(ctx->line, "\n");
-
-    if(write_data(ctx, &(ctx->clam), ctx->line) == -1)
-        return -1;
-
-    len = read_line(ctx, &(ctx->clam), 1);
-    if(len == 0)
-    {
-        messagex(ctx, LOG_ERR, "clamd disconnected unexpectedly");
-        return -1;
-    }
-
-    if(is_last_word(ctx->line, CLAM_OK, KL(CLAM_OK)))
-    {
-        add_to_logline(logline, "status=", "CLEAN");
-        messagex(ctx, LOG_DEBUG, "no virus");
-        return 0;
-    }
-
-    if(is_last_word(ctx->line, CLAM_FOUND, KL(CLAM_FOUND)))
-    {
-        len = strlen(tempname);
-
-        if(ctx->linelen > len)
-            add_to_logline(logline, "status=VIRUS:", ctx->line + len + 1);
-        else
-            add_to_logline(logline, "status=", "VIRUS");
-
-        messagex(ctx, LOG_DEBUG, "found virus");
-        return 1;
-    }
-
-    if(is_last_word(ctx->line, CLAM_ERROR, KL(CLAM_ERROR)))
-    {
-        messagex(ctx, LOG_ERR, "clamav error: %s", ctx->line);
-        return -1;
-    }
-
-    messagex(ctx, LOG_ERR, "unexepected response from clamd: %s", ctx->line);
-    return -1;
 }
 
 static int avcheck_data(clamsmtp_context_t* ctx, char* logline)
@@ -1027,6 +933,147 @@ static int complete_data_transfer(clamsmtp_context_t* ctx, const char* tempname)
 
     return 0;
 }
+
+static int read_server_response(clamsmtp_context_t* ctx)
+{
+    /* Read response line from the server */
+    if(read_line(ctx, &(ctx->server), 0) == -1)
+        return -1;
+
+    if(ctx->linelen == 0)
+    {
+        messagex(ctx, LOG_ERR, "server disconnected unexpectedly");
+
+        /* Tell the client it went wrong */
+        write_data(ctx, &(ctx->client), SMTP_FAILED);
+        return 0;
+    }
+
+    if(LINE_TOO_LONG(ctx))
+        messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
+
+    return 0;
+}
+
+
+/* ----------------------------------------------------------------------------------
+ *  CLAM AV
+ */
+
+static int connect_clam(clamsmtp_context_t* ctx)
+{
+    int r, len = -1;
+    int ret = 0;
+
+    ASSERT(ctx);
+    ASSERT(ctx->clam == -1);
+
+    if((ctx->clam = connect_socket(ctx, &g_clamaddr, g_clamname)) == -1)
+       RETURN(-1);
+
+    read_junk(ctx, ctx->clam);
+
+    /* Send a session and a check header to ClamAV */
+
+    if(write_data(ctx, &(ctx->clam), "SESSION\n") == -1)
+        RETURN(-1);
+
+    read_junk(ctx, ctx->clam);
+/*
+    if(write_data(ctx, &(ctx->clam), "PING\n") == -1 ||
+       read_line(ctx, &(ctx->clam), 1) == -1)
+        RETURN(-1);
+
+    if(strcmp(ctx->line, CONNECT_RESPONSE) != 0)
+    {
+        message(ctx, LOG_ERR, "clamd sent an unexpected response: %s", ctx->line);
+        RETURN(-1);
+    }
+*/
+    messagex(ctx, LOG_DEBUG, "connected to clamd: %s", g_clamname);
+
+cleanup:
+
+    if(ret < 0)
+    {
+        if(ctx->clam != -1)
+        {
+            shutdown(ctx->clam, SHUT_RDWR);
+            ctx->clam = -1;
+        }
+    }
+
+    return ret;
+}
+
+static int disconnect_clam(clamsmtp_context_t* ctx)
+{
+    if(ctx->clam == -1)
+        return 0;
+
+    if(write_data(ctx, &(ctx->clam), CLAM_DISCONNECT) != -1)
+        read_junk(ctx, ctx->clam);
+
+    shutdown(ctx->clam, SHUT_RDWR);
+    messagex(ctx, LOG_DEBUG, "disconnected from clamd");
+    ctx->clam = -1;
+    return 0;
+}
+
+static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* logline)
+{
+    int len;
+
+    ASSERT(LINE_LENGTH > MAXPATHLEN + 32);
+
+    strcpy(ctx->line, CLAM_SCAN);
+    strcat(ctx->line, tempname);
+    strcat(ctx->line, "\n");
+
+    if(write_data(ctx, &(ctx->clam), ctx->line) == -1)
+        return -1;
+
+    len = read_line(ctx, &(ctx->clam), 1);
+    if(len == 0)
+    {
+        messagex(ctx, LOG_ERR, "clamd disconnected unexpectedly");
+        return -1;
+    }
+
+    if(is_last_word(ctx->line, CLAM_OK, KL(CLAM_OK)))
+    {
+        add_to_logline(logline, "status=", "CLEAN");
+        messagex(ctx, LOG_DEBUG, "no virus");
+        return 0;
+    }
+
+    if(is_last_word(ctx->line, CLAM_FOUND, KL(CLAM_FOUND)))
+    {
+        len = strlen(tempname);
+
+        if(ctx->linelen > len)
+            add_to_logline(logline, "status=VIRUS:", ctx->line + len + 1);
+        else
+            add_to_logline(logline, "status=", "VIRUS");
+
+        messagex(ctx, LOG_DEBUG, "found virus");
+        return 1;
+    }
+
+    if(is_last_word(ctx->line, CLAM_ERROR, KL(CLAM_ERROR)))
+    {
+        messagex(ctx, LOG_ERR, "clamav error: %s", ctx->line);
+        return -1;
+    }
+
+    messagex(ctx, LOG_ERR, "unexepected response from clamd: %s", ctx->line);
+    return -1;
+}
+
+
+/* ----------------------------------------------------------------------------------
+ *  TEMP FILE HANDLING
+ */
 
 static int quarantine_virus(clamsmtp_context_t* ctx, char* tempname)
 {
@@ -1238,25 +1285,39 @@ cleanup:
     return ret;
 }
 
-static int read_server_response(clamsmtp_context_t* ctx)
+
+/* ----------------------------------------------------------------------------------
+ *  NETWORKING
+ */
+
+static int connect_socket(clamsmtp_context_t* ctx, struct sockaddr_any* sany, const char* addrname)
 {
-    /* Read response line from the server */
-    if(read_line(ctx, &(ctx->server), 0) == -1)
-        return -1;
+    int sock = -1;
+    int ret = 0;
 
-    if(ctx->linelen == 0)
+    if((sock = socket(SANY_TYPE(*sany), SOCK_STREAM, 0)) == -1)
+        RETURN(-1);
+
+    if(setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &g_timeout, sizeof(g_timeout)) == -1 ||
+       setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &g_timeout, sizeof(g_timeout)) == -1)
+        messagex(ctx, LOG_WARNING, "couldn't set timeouts on connection");
+
+    if(connect(sock, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
+        RETURN(-1);
+
+cleanup:
+    if(ret < 0)
     {
-        messagex(ctx, LOG_ERR, "server disconnected unexpectedly");
+        if(sock != -1)
+            shutdown(sock, SHUT_RDWR);
 
-        /* Tell the client it went wrong */
-        write_data(ctx, &(ctx->client), SMTP_FAILED);
-        return 0;
+        message(ctx, LOG_ERR, "couldn't connect to: %s", addrname);
+        RETURN(-1);
     }
 
-    if(LINE_TOO_LONG(ctx))
-        messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
-
-    return 0;
+    ASSERT(sock != -1);
+    messagex(ctx, LOG_DEBUG, "connected to: %s", addrname);
+    return sock;
 }
 
 static void read_junk(clamsmtp_context_t* ctx, int fd)
@@ -1341,14 +1402,31 @@ static int read_line(clamsmtp_context_t* ctx, int* fd, int trim)
             break;
         }
 
-        /* Transient errors */
-        else if(l == -1 && errno == EAGAIN)
-            continue;
-
-        /* Fatal errors */
         else if(l == -1)
         {
-            message(ctx, LOG_ERR, "couldn't read data");
+            if(errno == EINTR)
+            {
+                /* When the application is quiting */
+                if(g_quit)
+                    return -1;
+
+                /* For any other signal we go again */
+                continue;
+            }
+
+            /*
+             * The basic logic here is that if we've had a fatal error
+             * reading from the socket once then we shut it down as it's
+             * no good trying to read from again later.
+             */
+            shutdown(*fd, SHUT_RDWR);
+            *fd = -1;
+
+            if(errno == EAGAIN)
+                messagex(ctx, LOG_WARNING, "network read operation timed out");
+            else
+                message(ctx, LOG_ERR, "couldn't read data from socket");
+
             return -1;
         }
     }
@@ -1386,16 +1464,29 @@ static int write_data_raw(clamsmtp_context_t* ctx, int* fd, unsigned char* buf, 
 
         else if(r == -1)
         {
-            if(errno == EAGAIN)
-                continue;
-
-            if(errno == EPIPE)
+            if(errno == EINTR)
             {
-                shutdown(*fd, SHUT_RDWR);
-                *fd = -1;
+                /* When the application is quiting */
+                if(g_quit)
+                    return -1;
+
+                /* For any other signal we go again */
+                continue;
             }
 
-            message(ctx, LOG_ERR, "couldn't write data to socket");
+            /*
+             * The basic logic here is that if we've had a fatal error
+             * writing to the socket once then we shut it down as it's
+             * no good trying to write to it again later.
+             */
+            shutdown(*fd, SHUT_RDWR);
+            *fd = -1;
+
+            if(errno == EAGAIN)
+                messagex(ctx, LOG_WARNING, "network write operation timed out");
+            else
+                message(ctx, LOG_ERR, "couldn't write data to socket");
+
             return -1;
         }
     }

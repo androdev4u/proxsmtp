@@ -1063,6 +1063,7 @@ static int clam_scan_file(clamsmtp_context_t* ctx, const char* tempname, char* l
     if(is_last_word(ctx->line, CLAM_ERROR, KL(CLAM_ERROR)))
     {
         messagex(ctx, LOG_ERR, "clamav error: %s", ctx->line);
+        add_to_logline(logline, "status=ERROR");
         return -1;
     }
 

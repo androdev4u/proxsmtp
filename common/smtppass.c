@@ -524,9 +524,8 @@ static void connection_loop(int sock)
         /* Check to make sure we have a thread */
         if(fd != -1)
         {
-            messagex(NULL, LOG_ERR, "too many connections open (max %d)", g_maxthreads);
+            messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_maxthreads);
 
-            /* TODO: Respond with a too many connections message */
             write_data(NULL, &fd, SMTP_STARTBUSY);
             shutdown(fd, SHUT_RDWR);
             close(fd);
@@ -764,6 +763,16 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             }
 
             /*
+             * We need our response to HELO to be modified in order
+             * to prevent complaints about mail loops
+             */
+            else if(is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
+            {
+                /* A new message line */
+                logline[0] = 0;
+            }
+
+            /*
              * We don't like these commands. Filter them out. We should have
              * filtered out their service extensions earlier in the EHLO response.
              * This is just for errant clients.
@@ -789,8 +798,7 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 add_to_logline(logline, "to=", ctx->line + r);
 
             /* Reset log line */
-            else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)) ||
-                    is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
+            else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)))
                 logline[0] = 0;
 
             /* All other commands just get passed through to server */
@@ -1589,6 +1597,8 @@ static int write_data(clamsmtp_context_t* ctx, int* fd, unsigned char* buf)
         return -1;
     }
 
-    log_fd_data(ctx, buf, fd, 0);
+    if(ctx != NULL)
+        log_fd_data(ctx, buf, fd, 0);
+
     return write_data_raw(ctx, fd, buf, len);
 }

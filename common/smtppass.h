@@ -50,48 +50,6 @@ struct spctx;
  * only things that are currently used go here.
  */
 
-typedef struct spio
-{
-    int fd;                             /* The file descriptor wrapped */
-    const char* name;                   /* The name for logging */
-    #define SPIO_BUFLEN 256
-    unsigned char _bf[SPIO_BUFLEN];
-    size_t _ln;
-}
-spio_t;
-
-#define SPIO_TRIM           0x00000001
-#define SPIO_DISCARD        0x00000002
-#define SPIO_QUIET          0x00000004
-
-#define spio_valid(io)      ((io)->fd != -1)
-
-/* Setup the io structure (allocated elsewhere */
-void spio_init(spio_t* io, const char* name);
-
-/* Connect and disconnect from sockets */
-int  spio_connect(struct spctx* ctx, spio_t* io, const struct sockaddr_any* sany, const char* addrname);
-void spio_disconnect(struct spctx* ctx, spio_t* io);
-
-/* Read a line from a socket. Use options above */
-int  spio_read_line(struct spctx* ctx, spio_t* io, int opts);
-
-/* Write data to socket (must supply line endings if needed).
- * Guaranteed to accept all data or fail. */
-int  spio_write_data(struct spctx* ctx, spio_t* io, const char* data);
-int  spio_write_data_raw(struct spctx* ctx, spio_t* io, unsigned char* buf, int len);
-
-/* Empty the given socket */
-void spio_read_junk(struct spctx* sp, spio_t* io);
-
-/* Pass up to 31 spio_t*, followed by NULL. Returns bitmap of ready for reading */
-unsigned int  spio_select(struct spctx* ctx, ...);
-
-
-/* -----------------------------------------------------------------------------
- * SMTP PASS THROUGH FUNCTIONALITY
- */
-
 /*
  * A generous maximum line length. It needs to be longer than
  * a full path on this system can be, because we pass the file
@@ -104,6 +62,51 @@ unsigned int  spio_select(struct spctx* ctx, ...);
     #define SP_LINE_LENGTH (MAXPATHLEN + 128)
 #endif
 
+typedef struct spio
+{
+    int fd;                             /* The file descriptor wrapped */
+    const char* name;                   /* The name for logging */
+
+    /* Internal use only */
+    char line[SP_LINE_LENGTH];
+    char* _nx;
+    size_t _ln;
+}
+spio_t;
+
+#define spio_valid(io)      ((io)->fd != -1)
+
+/* Setup the io structure (allocated elsewhere */
+void spio_init(spio_t* io, const char* name);
+
+/* Connect and disconnect from sockets */
+int  spio_connect(struct spctx* ctx, spio_t* io, const struct sockaddr_any* sany, const char* addrname);
+void spio_disconnect(struct spctx* ctx, spio_t* io);
+
+#define SPIO_TRIM           0x00000001
+#define SPIO_DISCARD        0x00000002
+#define SPIO_QUIET          0x00000004
+
+/* Read a line from a socket. Use options above. Line
+ * will be found in io->line */
+int spio_read_line(struct spctx* ctx, spio_t* io, int opts);
+
+/* Write data to socket (must supply line endings if needed).
+ * Guaranteed to accept all data or fail. */
+int spio_write_data(struct spctx* ctx, spio_t* io, const char* data);
+int spio_write_data_raw(struct spctx* ctx, spio_t* io, unsigned char* buf, int len);
+
+/* Empty the given socket */
+void spio_read_junk(struct spctx* sp, spio_t* io);
+
+/* Pass up to 31 spio_t*, followed by NULL. Returns bitmap of ready for reading */
+unsigned int  spio_select(struct spctx* ctx, ...);
+
+
+/* -----------------------------------------------------------------------------
+ * SMTP PASS THROUGH FUNCTIONALITY
+ */
+
 typedef struct spctx
 {
     unsigned int id;                /* Identifier for the connection */
@@ -111,14 +114,16 @@ typedef struct spctx
     spio_t client;                  /* Connection to client */
     spio_t server;                  /* Connection to server */
 
-    char logline[SP_LINE_LENGTH];   /* Log line */
-    char line[SP_LINE_LENGTH];      /* Working buffer */
-    int  linelen;                   /* Length of valid data in above */
-
     FILE* cachefile;                /* The file handle for the cached file */
     char cachename[MAXPATHLEN];     /* The name of the file that we cache into */
+    char logline[SP_LINE_LENGTH];   /* Log line */
+
+    char* sender;             /* The email of the sender */
+    char* recipients;         /* The email of the recipients */
 
     int _crlf;                      /* Private data */
+    char _l1[SP_LINE_LENGTH];
+    char _l2[SP_LINE_LENGTH];
 }
 spctx_t;
 
@@ -207,6 +212,13 @@ int sp_done_data(spctx_t* ctx, const char* header);
  * status to client or if NULL then SMTP_DATAFAILED
  */
 int sp_fail_data(spctx_t* ctx, const char* smtp_status);
+
+/*
+ * Setup the environment with context info. This is useful
+ * if you're going to fork another process. Be sure to fork
+ * soon after to prevent the strings from going out of scope.
+ */
+void sp_setup_env(spctx_t* ctx);
 
 /*
  * Log a message. levels are syslog levels. Syntax is just

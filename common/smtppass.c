@@ -174,6 +174,8 @@ static int smtp_passthru(spctx_t* ctx);
 static int connect_out(spctx_t* ctx);
 static int read_server_response(spctx_t* ctx);
 static int parse_config_file(const char* configfile);
+static char* parse_address(char* line);
+static int is_successful_rsp(char* line);
 
 /* Used externally in some cases */
 int sp_parse_option(const char* name, const char* option);
@@ -602,6 +604,18 @@ static void cleanup_context(spctx_t* ctx)
         ctx->cachename[0] = 0;
     }
 
+    if(ctx->recipients)
+    {
+        free(ctx->recipients);
+        ctx->recipients = NULL;
+    }
+
+    if(ctx->sender)
+    {
+        free(ctx->sender);
+        ctx->sender = NULL;
+    }
+
     ctx->logline[0] = 0;
 }
 
@@ -762,16 +776,19 @@ static int connect_out(spctx_t* ctx)
 
 static int smtp_passthru(spctx_t* ctx)
 {
+    char* t;
     int r, ret = 0;
     unsigned int mask;
     int neterror = 0;
 
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
-    int filter_ehlo = 0;    /* Filtering parts of an EHLO extensions response */
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
 
     ASSERT(spio_valid(&(ctx->client)) &&
            spio_valid(&(ctx->server)));
+
+    #define C_LINE  ctx->client.line
+    #define S_LINE  ctx->server.line
 
     for(;;)
     {
@@ -786,15 +803,15 @@ static int smtp_passthru(spctx_t* ctx)
         /* Client has data available, read a line and process */
         if(mask & 1)
         {
-            if(spio_read_line(ctx, &(ctx->client), SPIO_DISCARD) == -1)
+            if((r = spio_read_line(ctx, &(ctx->client), SPIO_DISCARD)) == -1)
                 RETURN(-1);
 
             /* Client disconnected, we're done */
-            if(ctx->linelen == 0)
+            if(r == 0)
                 RETURN(0);
 
             /* We don't let clients send really long lines */
-            if(LINE_TOO_LONG(ctx))
+            if(LINE_TOO_LONG(r))
             {
                 if(spio_write_data(ctx, &(ctx->client), SMTP_TOOLONG) == -1)
                     RETURN(-1);
@@ -803,11 +820,10 @@ static int smtp_passthru(spctx_t* ctx)
             }
 
             /* Only valid after EHLO or HELO commands */
-            filter_ehlo = 0;
             filter_host = 0;
 
             /* Handle the DATA section via our AV checker */
-            if(is_first_word(ctx->line, DATA_CMD, KL(DATA_CMD)))
+            if(is_first_word(C_LINE, DATA_CMD, KL(DATA_CMD)))
             {
                 /* Send back the intermediate response to the client */
                 if(spio_write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
@@ -832,29 +848,14 @@ static int smtp_passthru(spctx_t* ctx)
             }
 
             /*
-             * We filter out features that we can't support in
-             * the EHLO response (ESMTP). See below
-             */
-            else if(is_first_word(ctx->line, EHLO_CMD, KL(EHLO_CMD)))
-            {
-                sp_messagex(ctx, LOG_DEBUG, "filtering EHLO response");
-                filter_ehlo = 1;
-                filter_host = 1;
-
-                /* New email so cleanup  */
-                cleanup_context(ctx);
-            }
-
-            /*
              * We need our response to HELO to be modified in order
              * to prevent complaints about mail loops
              */
-            else if(is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
+            else if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)) ||
+                    is_first_word(C_LINE, HELO_CMD, KL(HELO_CMD)))
             {
+                /* EHLO can have multline responses so we set a flag */
                 filter_host = 1;
-
-                /* A new email so cleanup */
-                cleanup_context(ctx);
             }
 
             /*
@@ -862,8 +863,8 @@ static int smtp_passthru(spctx_t* ctx)
              * filtered out their service extensions earlier in the EHLO response.
              * This is just for errant clients.
              */
-            else if(is_first_word(ctx->line, STARTTLS_CMD, KL(STARTTLS_CMD)) ||
-                    is_first_word(ctx->line, BDAT_CMD, KL(BDAT_CMD)))
+            else if(is_first_word(C_LINE, STARTTLS_CMD, KL(STARTTLS_CMD)) ||
+                    is_first_word(C_LINE, BDAT_CMD, KL(BDAT_CMD)))
             {
                 sp_messagex(ctx, LOG_DEBUG, "ESMTP feature not supported");
 
@@ -874,20 +875,8 @@ static int smtp_passthru(spctx_t* ctx)
                 continue;
             }
 
-            /* Append recipients to log line */
-            else if((r = check_first_word(ctx->line, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
-                sp_add_log(ctx, "from=", ctx->line + r);
-
-            /* Append sender to log line */
-            else if((r = check_first_word(ctx->line, TO_CMD, KL(TO_CMD), SMTP_DELIMS)) > 0)
-                sp_add_log(ctx, "to=", ctx->line + r);
-
-            /* Reset log line */
-            else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)))
-                cleanup_context(ctx);
-
             /* All other commands just get passed through to server */
-            if(spio_write_data(ctx, &(ctx->server), ctx->line) == -1)
+            if(spio_write_data(ctx, &(ctx->server), C_LINE) == -1)
                 RETURN(-1);
 
             continue;
@@ -896,13 +885,13 @@ static int smtp_passthru(spctx_t* ctx)
         /* Server has data available, read a line and forward */
         if(mask & 2)
         {
-            if(spio_read_line(ctx, &(ctx->server), SPIO_DISCARD) == -1)
+            if((r = spio_read_line(ctx, &(ctx->server), SPIO_DISCARD)) == -1)
                 RETURN(-1);
 
-            if(ctx->linelen == 0)
+            if(r == 0)
                 RETURN(0);
 
-            if(LINE_TOO_LONG(ctx))
+            if(LINE_TOO_LONG(r))
                 sp_messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
 
             /*
@@ -921,7 +910,7 @@ static int smtp_passthru(spctx_t* ctx)
             {
                 first_rsp = 0;
 
-                if(is_first_word(ctx->line, START_RSP, KL(START_RSP)))
+                if(is_first_word(S_LINE, START_RSP, KL(START_RSP)))
                 {
                     sp_messagex(ctx, LOG_DEBUG, "intercepting initial response");
 
@@ -940,40 +929,49 @@ static int smtp_passthru(spctx_t* ctx)
              */
             if(filter_host)
             {
+                /* Can have multi-line responses, and we want to be
+                 * sure to only replace the first one. */
                 filter_host = 0;
 
                 /* Check for a simple '250 xxxx' */
-                if(is_first_word(ctx->line, OK_RSP, KL(OK_RSP)))
+                if(is_first_word(S_LINE, OK_RSP, KL(OK_RSP)))
                 {
                     sp_messagex(ctx, LOG_DEBUG, "intercepting host response");
 
                     if(spio_write_data(ctx, &(ctx->client), SMTP_HELO_RSP) == -1)
                         RETURN(-1);
 
+
+                    /* A new email so cleanup */
+                    cleanup_context(ctx);
+
                     continue;
                 }
 
                 /* Check for the continued response '250-xxxx' */
-                if(check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_MULTI_DELIMS) > 0)
+                if(check_first_word(S_LINE, OK_RSP, KL(OK_RSP), SMTP_MULTI_DELIMS) > 0)
                 {
                     sp_messagex(ctx, LOG_DEBUG, "intercepting host response");
 
                     if(spio_write_data(ctx, &(ctx->client), SMTP_EHLO_RSP) == -1)
                         RETURN(-1);
 
+                    /* New email so cleanup  */
+                    cleanup_context(ctx);
+
                     continue;
                 }
             }
 
-            /*
-             * Filter out any EHLO responses that we can't or don't want
-             * to support. For example pipelining or TLS.
-             */
-            if(filter_ehlo)
+            if(is_successful_rsp(S_LINE))
             {
-                if((r = check_first_word(ctx->line, OK_RSP, KL(OK_RSP), SMTP_MULTI_DELIMS)) > 0)
+                /*
+                 * Filter out any EHLO responses that we can't or don't want
+                 * to support. For example pipelining or TLS.
+                 */
+                if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)))
                 {
-                    char* p = ctx->line + r;
+                    char* p = S_LINE + r;
                     if(is_first_word(p, ESMTP_PIPELINE, KL(ESMTP_PIPELINE)) ||
                        is_first_word(p, ESMTP_TLS, KL(ESMTP_TLS)) ||
                        is_first_word(p, ESMTP_CHUNK, KL(ESMTP_CHUNK)) ||
@@ -984,9 +982,45 @@ static int smtp_passthru(spctx_t* ctx)
                         continue;
                     }
                 }
+
+                /* MAIL FROM */
+                if((r = check_first_word(C_LINE, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
+                {
+                    t = parse_address(C_LINE + r);
+                    sp_add_log(ctx, "from=", t);
+
+                    /* Make note of the sender for later */
+                    ctx->sender = (char*)reallocf(ctx->sender, strlen(t) + 1);
+                    if(ctx->sender)
+                        strcpy(ctx->sender, t);
+                }
+
+                /* RCPT TO */
+                else if((r = check_first_word(C_LINE, TO_CMD, KL(TO_CMD), SMTP_DELIMS)) > 0)
+                {
+                    t = parse_address(C_LINE + r);
+                    sp_add_log(ctx, "to=", t);
+
+                    /* Make note of the recipient for later */
+                    r = ctx->recipients ? strlen(ctx->recipients) : 0;
+                    ctx->recipients = (char*)reallocf(ctx->recipients, r + strlen(t) + 2);
+                    if(ctx->recipients)
+                    {
+                        /* Recipients are separated by lines */
+                        if(r != 0)
+                            strcat(ctx->recipients, "\n");
+                        strcat(ctx->recipients, t);
+                    }
+                }
+
+                /* RSET */
+                else if(is_first_word(C_LINE, RSET_CMD, KL(RSET_CMD)))
+                {
+                    cleanup_context(ctx);
+                }
             }
 
-            if(spio_write_data(ctx, &(ctx->client), ctx->line) == -1)
+            if(spio_write_data(ctx, &(ctx->client), S_LINE) == -1)
                 RETURN(-1);
 
             continue;
@@ -1004,6 +1038,44 @@ cleanup:
 /* -----------------------------------------------------------------------------
  *  SMTP PASSTHRU FUNCTIONS FOR DATA CHECK
  */
+
+static char* parse_address(char* line)
+{
+    char* t;
+    line = trim_start(line);
+
+    /*
+     * We parse out emails in the form of <blah@blah.com>
+     * as well as accept other addresses.
+     */
+    if(line[0] == '<')
+    {
+        if((t = strchr(line, '>')) != NULL)
+        {
+            *t = 0;
+            line++;
+            return line;
+        }
+    }
+
+    return trim_end(line);
+}
+
+static int is_successful_rsp(char* line)
+{
+    /*
+     * We check for both '250 xxx' type replies
+     * and the continued response '250-xxxx' type
+     */
+
+    line = trim_start(line);
+
+    if(line[0] == '2' && isdigit(line[1]) && isdigit(line[2]) &&
+       (line[3] == ' ' || line[3] == '-'))
+        return 1;
+
+    return 0;
+}
 
 void sp_add_log(spctx_t* ctx, char* prefix, char* line)
 {
@@ -1028,12 +1100,14 @@ void sp_add_log(spctx_t* ctx, char* prefix, char* line)
 
 int sp_read_data(spctx_t* ctx, const char** data)
 {
+    int r;
+
     ASSERT(ctx);
     ASSERT(data);
 
     *data = NULL;
 
-    switch(spio_read_line(ctx, &(ctx->client), SPIO_QUIET))
+    switch(r = spio_read_line(ctx, &(ctx->client), SPIO_QUIET))
     {
     case 0:
         sp_messagex(ctx, LOG_ERR, "unexpected end of data from client");
@@ -1043,13 +1117,13 @@ int sp_read_data(spctx_t* ctx, const char** data)
         return -1;
     };
 
-    if(ctx->_crlf && strcmp(ctx->line, DATA_END_SIG) == 0)
+    if(ctx->_crlf && strcmp(ctx->client.line, DATA_END_SIG) == 0)
         return 0;
 
     /* Check if this line ended with a CRLF */
-    ctx->_crlf = (strcmp(CRLF, ctx->line + (ctx->linelen - KL(CRLF))) == 0);
-    *data = ctx->line;
-    return ctx->linelen;
+    ctx->_crlf = (strcmp(CRLF, ctx->client.line + (r - KL(CRLF))) == 0);
+    *data = ctx->client.line;
+    return r;
 }
 
 int sp_write_data(spctx_t* ctx, const char* buf, int len)
@@ -1140,6 +1214,7 @@ int sp_done_data(spctx_t* ctx, const char* header)
     FILE* file = 0;
     int had_header = 0;
     int ret = 0;
+    char line[SP_LINE_LENGTH];
 
     ASSERT(ctx->cachename[0]);  /* Must still be around */
     ASSERT(!ctx->cachefile);    /* File must be closed */
@@ -1160,9 +1235,9 @@ int sp_done_data(spctx_t* ctx, const char* header)
         RETURN(-1);
 
     /* If server returns an error then tell the client */
-    if(!is_first_word(ctx->line, DATA_RSP, KL(DATA_RSP)))
+    if(!is_first_word(ctx->server.line, DATA_RSP, KL(DATA_RSP)))
     {
-        if(spio_write_data(ctx, &(ctx->client), ctx->line) == -1)
+        if(spio_write_data(ctx, &(ctx->client), ctx->server.line) == -1)
             RETURN(-1);
 
         sp_messagex(ctx, LOG_DEBUG, "server refused data transfer");
@@ -1173,15 +1248,24 @@ int sp_done_data(spctx_t* ctx, const char* header)
     sp_messagex(ctx, LOG_DEBUG, "sending from cache file: %s", ctx->cachename);
 
     /* Transfer actual file data */
-    while(fgets(ctx->line, SP_LINE_LENGTH, file) != NULL)
+    while(fgets(line, SP_LINE_LENGTH, file) != NULL)
     {
+        /*
+         * If the line is <CRLF>.<CRLF> we need to change it so that
+         * it doesn't end the email. We do this by adding a space.
+         * This won't occur much in clamsmtpd, but proxsmtpd might
+         * have filters that accidentally put this in.
+         */
+        if(strcmp(line, "." CRLF) == 0)
+            strncpy(line, ". " CRLF, SP_LINE_LENGTH);
+
         if(header && !had_header)
         {
             /*
              * The first blank line we see means the headers are done.
              * At this point we add in our virus checked header.
              */
-            if(is_blank_line(ctx->line))
+            if(is_blank_line(line))
             {
                 if(spio_write_data_raw(ctx, &(ctx->server), (char*)header, strlen(header)) == -1 ||
                    spio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
@@ -1191,7 +1275,7 @@ int sp_done_data(spctx_t* ctx, const char* header)
             }
         }
 
-        if(spio_write_data_raw(ctx, &(ctx->server), ctx->line, strlen(ctx->line)) == -1)
+        if(spio_write_data_raw(ctx, &(ctx->server), line, strlen(line)) == -1)
             RETURN(-1);
     }
 
@@ -1211,7 +1295,7 @@ int sp_done_data(spctx_t* ctx, const char* header)
     if(read_server_response(ctx) == -1)
         RETURN(-1);
 
-    if(spio_write_data(ctx, &(ctx->client), ctx->line) == -1)
+    if(spio_write_data(ctx, &(ctx->client), ctx->server.line) == -1)
         RETURN(-1);
 
 cleanup:
@@ -1260,11 +1344,13 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 
 static int read_server_response(spctx_t* ctx)
 {
+    int r;
+
     /* Read response line from the server */
-    if(spio_read_line(ctx, &(ctx->server), SPIO_DISCARD) == -1)
+    if((r = spio_read_line(ctx, &(ctx->server), SPIO_DISCARD)) == -1)
         return -1;
 
-    if(ctx->linelen == 0)
+    if(r == 0)
     {
         sp_messagex(ctx, LOG_ERR, "server disconnected unexpectedly");
 
@@ -1273,11 +1359,26 @@ static int read_server_response(spctx_t* ctx)
         return 0;
     }
 
-    if(LINE_TOO_LONG(ctx))
+    if(LINE_TOO_LONG(r))
         sp_messagex(ctx, LOG_WARNING, "SMTP response line too long. discarded extra");
 
     return 0;
 }
+
+void sp_setup_env(spctx_t* ctx)
+{
+    if(ctx->sender)
+        setenv("SENDER", ctx->sender, 1);
+
+    if(ctx->recipients)
+        setenv("RECIPIENTS", ctx->recipients, 1);
+
+    if(ctx->cachename[0])
+        setenv("EMAIL", ctx->cachename, 1);
+
+    setenv("TMP", g_state.directory, 1);
+}
+
 
 /* ----------------------------------------------------------------------------------
  *  LOGGING

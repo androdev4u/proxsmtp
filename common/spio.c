@@ -65,6 +65,7 @@
 
 #define MAX_LOG_LINE    79
 #define GET_IO_NAME(io)  ((io)->name ? (io)->name : "???   ")
+#define HAS_EXTRA(io)   ((io)->_ln > 0)
 
 static void close_raw(int* fd)
 {
@@ -127,6 +128,11 @@ int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sany,
     if(connect(io->fd, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
         RETURN(-1);
 
+    /* As a double check */
+    io->line[0] = 0;
+    io->_nx = NULL;
+    io->_ln = 0;
+
 cleanup:
     if(ret < 0)
     {
@@ -173,7 +179,7 @@ unsigned int spio_select(spctx_t* ctx, ...)
             break;
 
         /* Check if the buffer has something in it */
-        if(io->_ln > 0)
+        if(HAS_EXTRA(io))
             ret |= (1 << i);
 
         /* Mark for select */
@@ -221,11 +227,170 @@ unsigned int spio_select(spctx_t* ctx, ...)
     return ret;
 }
 
+int read_raw(spctx_t* ctx, spio_t* io, int opts)
+{
+    int len, x;
+    char* at;
+    char* p;
+
+    /*
+     * Just a refresher:
+     *
+     * _nx: Extra data read on last read.
+     * _ln: Length of that extra data.
+     *
+     * _nx should never be equal to line when entering this
+     * function. And _ln should always be less than a full
+     * buffer.
+     */
+
+    /* Remaining data in the buffer  */
+    if(io->_nx && io->_ln > 0)
+    {
+        ASSERT(!io->_nx || io->_nx > io->line);
+        ASSERT(io->_ln < SP_LINE_LENGTH);
+        ASSERT(io->_nx + io->_ln < io->line + SP_LINE_LENGTH);
+
+        /* Check for a return in the current buffer */
+        if((p = (char*)memchr(io->_nx, '\n', io->_ln)) != NULL)
+        {
+            /* Move data to front */
+            x = (p - io->_nx) + 1;
+            ASSERT(x > 0);
+            memmove(io->line, io->_nx, x);
+
+            /* Null teriminate it */
+            io->line[x] = 0;
+
+            /* Do maintanence for next time around */
+            io->_ln -= x;
+            io->_nx += x;
+
+            /* A double check on the return value */
+            ASSERT(strlen(io->line) == x);
+            return x;
+        }
+
+        /* Otherwise move all old data to front */
+        memmove(io->line, io->_nx, io->_ln);
+
+        /* We always leave space for a null terminator */
+        len = (SP_LINE_LENGTH - io->_ln) - 1;
+        at = io->line + io->_ln;
+    }
+
+    /* No data at front just read straight in */
+    else
+    {
+        /* We always leave space for a null terminator */
+        len = SP_LINE_LENGTH - 1;
+        at = io->line;
+    }
+
+    for(;;)
+    {
+        /* Read a block of data */
+        ASSERT(io->fd != -1);
+        x = read(io->fd, at, sizeof(char) * len);
+
+        if(x == -1)
+        {
+            if(errno == EINTR)
+            {
+                /* When the application is quiting */
+                if(sp_is_quit())
+                    return -1;
+
+                /* For any other signal we go again */
+                continue;
+            }
+
+            if(errno == ECONNRESET) /* Not usually a big deal so supresse the error */
+                sp_messagex(ctx, LOG_DEBUG, "connection disconnected by peer: %s", GET_IO_NAME(io));
+            else if(errno == EAGAIN)
+                sp_messagex(ctx, LOG_WARNING, "network read operation timed out: %s", GET_IO_NAME(io));
+            else
+                sp_message(ctx, LOG_ERR, "couldn't read data from socket: %s", GET_IO_NAME(io));
+
+            /*
+             * The basic logic here is that if we've had a fatal error
+             * reading from the socket once then we shut it down as it's
+             * no good trying to read from again later.
+             */
+            close_raw(&(io->fd));
+
+            return -1;
+        }
+
+        /* End of data */
+        else if(x == 0)
+        {
+            /* Maintenance for remaining data */
+            io->_nx = NULL;
+            io->_ln = 0;
+
+            /* A double check on the return value */
+            ASSERT(strlen(io->line) == at - io->line);
+            return at - io->line;
+        }
+
+        /* Check for a new line */
+        p = (char*)memchr(at, '\n', x);
+        if(p != NULL)
+        {
+            p++;
+            len = x - (p - at);
+
+            /* Insert the null terminator */
+            memmove(p, p + 1, len);
+            *p = 0;
+
+            /* Do maintenence for remaining data */
+            io->_nx = p + 1;
+            io->_ln = len;
+
+            /* A double check on the return value */
+            ASSERT(strlen(io->line) == p - io->line);
+            return p - io->line;
+        }
+
+        if(len <= 0)
+        {
+            /* Keep reading until we hit a new line */
+            if(opts & SPIO_DISCARD)
+            {
+                /*
+                 * K, basically the logic is that we're discarding
+                 * data ond the data will be screwed up. So overwriting
+                 * some valid data in order to flush the line and
+                 * keep the buffering simple is a price we pay gladly :)
+                 */
+
+                ASSERT(128 < SP_LINE_LENGTH);
+                at = (io->line + SP_LINE_LENGTH) - 128;
+                len = 128;
+
+                /* Go for next read */
+                continue;
+            }
+
+            io->_nx = NULL;
+            io->_ln = 0;
+
+            /* Null terminate */
+            io->line[SP_LINE_LENGTH] = 0;
+
+            /* A double check on the return value */
+            ASSERT(strlen(io->line) == p - io->line);
+            return SP_LINE_LENGTH;
+        }
+    }
+}
+
 int spio_read_line(spctx_t* ctx, spio_t* io, int opts)
 {
-    int l, x;
+    int x, l;
     char* t;
-    unsigned char* p;
 
     ASSERT(ctx && io);
 
@@ -235,120 +400,37 @@ int spio_read_line(spctx_t* ctx, spio_t* io, int opts)
         return 0;
     }
 
-    ctx->line[0] = 0;
-    t = ctx->line;
-    l = SP_LINE_LENGTH - 1;
+    x = read_raw(ctx, io, opts);
 
-    for(;;)
+    if(x > 0)
     {
-        /* refil buffer if necessary */
-        if(io->_ln == 0)
+        if(opts & SPIO_TRIM)
         {
-            ASSERT(io->fd != -1);
-            io->_ln = read(io->fd, io->_bf, sizeof(char) * SPIO_BUFLEN);
+            t = io->line;
 
-            if(io->_ln == -1)
+            while(*t && isspace(*t))
+                t++;
+
+            /* Bump the entire line down */
+            l = t - io->line;
+            memmove(io->line, t, (x + 1) - l);
+            x -= l;
+
+            /* Now the end */
+            t = io->line + x;
+
+            while(t > io->line && isspace(*(t - 1)))
             {
-                io->_ln = 0;
-
-                if(errno == EINTR)
-                {
-                    /* When the application is quiting */
-                    if(sp_is_quit())
-                        return -1;
-
-                    /* For any other signal we go again */
-                    continue;
-                }
-
-                if(errno == ECONNRESET) /* Not usually a big deal so supresse the error */
-                    sp_messagex(ctx, LOG_DEBUG, "connection disconnected by peer: %s", GET_IO_NAME(io));
-                else if(errno == EAGAIN)
-                    sp_messagex(ctx, LOG_WARNING, "network read operation timed out: %s", GET_IO_NAME(io));
-                else
-                    sp_message(ctx, LOG_ERR, "couldn't read data from socket: %s", GET_IO_NAME(io));
-
-                /*
-                 * The basic logic here is that if we've had a fatal error
-                 * reading from the socket once then we shut it down as it's
-                 * no good trying to read from again later.
-                 */
-                close_raw(&(io->fd));
-
-                return -1;
+                *(--t) = 0;
+                x--;
             }
         }
 
-        /* End of data */
-        if(io->_ln == 0)
-            break;
-
-        /* Check for a new line */
-        p = (unsigned char*)memchr(io->_bf, '\n', io->_ln);
-
-        if(p != NULL)
-        {
-            x = (p - io->_bf) + 1;
-            io->_ln -= x;
-        }
-
-        else
-        {
-            x = io->_ln;
-            io->_ln = 0;
-        }
-
-        if(x > l)
-           x = l;
-
-        /* Copy from buffer line */
-        memcpy(t, io->_bf, x);
-        t += x;
-        l -= x;
-
-        /* Move whatever we have in the buffer to the front */
-        if(io->_ln > 0)
-            memmove(io->_bf, io->_bf + x, io->_ln);
-
-        /* Found a new line, done */
-        if(p != NULL)
-            break;
-
-        /* If discarding then don't break when full */
-        if(!(opts && SPIO_DISCARD) && l == 0)
-            break;
+        if(!(opts & SPIO_QUIET))
+            log_io_data(ctx, io, io->line, 1);
     }
 
-    ctx->linelen = (SP_LINE_LENGTH - l) - 1;
-    ASSERT(ctx->linelen < SP_LINE_LENGTH);
-    ctx->line[ctx->linelen] = 0;
-
-    if(opts & SPIO_TRIM && ctx->linelen > 0)
-    {
-        t = ctx->line;
-
-        while(*t && isspace(*t))
-            t++;
-
-        /* Bump the entire line down */
-        l = t - ctx->line;
-        memmove(ctx->line, t, (ctx->linelen + 1) - l);
-        ctx->linelen -= l;
-
-        /* Now the end */
-        t = ctx->line + ctx->linelen;
-
-        while(t > ctx->line && isspace(*(t - 1)))
-        {
-            *(--t) = 0;
-            ctx->linelen--;
-        }
-    }
-
-    if(!(opts & SPIO_QUIET))
-        log_io_data(ctx, io, ctx->line, 1);
-
-    return ctx->linelen;
+    return x;
 }
 
 int spio_write_data(spctx_t* ctx, spio_t* io, const char* data)
@@ -428,6 +510,7 @@ void spio_read_junk(spctx_t* ctx, spio_t* io)
 
     /* Truncate any data in buffer */
     io->_ln = 0;
+    io->_nx = 0;
 
     if(!spio_valid(io))
         return;

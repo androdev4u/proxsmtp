@@ -142,6 +142,7 @@ spthread_t;
 #define CFG_TRANSPARENT     "TransparentProxy"
 #define CFG_DIRECTORY       "TempDirectory"
 #define CFG_USER            "User"
+#define CFG_PIDFILE         "PidFile"
 
 /* -----------------------------------------------------------------------
  *  DEFAULT SETTINGS
@@ -168,7 +169,7 @@ pthread_mutexattr_t g_mtxattr;
 
 static void on_quit(int signal);
 static void drop_privileges();
-static void pid_file(const char* pidfile, int write);
+static void pid_file(int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
 static int smtp_passthru(spctx_t* ctx);
@@ -224,6 +225,7 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
     if(!(dbg_level == -1 || dbg_level <= LOG_DEBUG))
         errx(2, "invalid debug log level (must be between 1 and 4)");
     g_state.debug_level = dbg_level;
+    g_state.pidfile = pidfile;
 
     /* Now parse the configuration file */
     if(parse_config_file(configfile) == -1)
@@ -306,15 +308,13 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
     siginterrupt(SIGINT, 1);
     siginterrupt(SIGTERM, 1);
 
-    if(pidfile)
-        pid_file(pidfile, 1);
+    pid_file(1);
 
     sp_messagex(NULL, LOG_DEBUG, "accepting connections");
 
     connection_loop(sock);
 
-    if(pidfile)
-        pid_file(pidfile, 0);
+    pid_file(0);
 
     /* Our listen socket */
     close(sock);
@@ -390,33 +390,36 @@ static void drop_privileges()
 }
 
 
-static void pid_file(const char* pidfile, int write)
+static void pid_file(int write)
 {
+    if(!g_state.pidfile)
+        return;
+
     if(write)
     {
-        FILE* f = fopen(pidfile, "w");
+        FILE* f = fopen(g_state.pidfile, "w");
         if(f == NULL)
         {
-            sp_message(NULL, LOG_ERR, "couldn't open pid file: %s", pidfile);
+            sp_message(NULL, LOG_ERR, "couldn't open pid file: %s", g_state.pidfile);
         }
         else
         {
             fprintf(f, "%d\n", (int)getpid());
 
             if(ferror(f))
-                sp_message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
+                sp_message(NULL, LOG_ERR, "couldn't write to pid file: %s", g_state.pidfile);
             if(fclose(f) == EOF)
-                sp_message(NULL, LOG_ERR, "couldn't write to pid file: %s", pidfile);
+                sp_message(NULL, LOG_ERR, "couldn't write to pid file: %s", g_state.pidfile);
 
         }
 
-        sp_messagex(NULL, LOG_DEBUG, "wrote pid file: %s", pidfile);
+        sp_messagex(NULL, LOG_DEBUG, "wrote pid file: %s", g_state.pidfile);
     }
 
     else
     {
-        unlink(pidfile);
-        sp_messagex(NULL, LOG_DEBUG, "removed pid file: %s", pidfile);
+        unlink(g_state.pidfile);
+        sp_messagex(NULL, LOG_DEBUG, "removed pid file: %s", g_state.pidfile);
     }
 }
 
@@ -1584,6 +1587,18 @@ int sp_parse_option(const char* name, const char* value)
         if(strlen(value) == 0)
             errx(2, "invalid setting: " CFG_USER);
         g_state.user = value;
+        ret = 1;
+    }
+
+    else if(strcasecmp(CFG_PIDFILE, name) == 0)
+    {
+        if(g_state.pidfile != NULL)
+            sp_messagex(NULL, LOG_WARNING, "ignoring pid file specified on the command line. ");
+
+        if(strlen(value) == 0)
+            g_state.pidfile = NULL;
+        else
+            g_state.pidfile = value;
         ret = 1;
     }
 

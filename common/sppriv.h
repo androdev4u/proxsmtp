@@ -50,6 +50,7 @@ typedef struct spstate
     int transparent;                /* Transparent proxying */
     const char* directory;          /* The temp directory */
     const char* user;               /* User to run as */
+    const char* pidfile;            /* The pid file for daemon */
 
     struct sockaddr_any outaddr;    /* The outgoing address */
     const char* outname;

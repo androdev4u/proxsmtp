@@ -754,6 +754,9 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
             {
                 messagex(ctx, LOG_DEBUG, "filtering EHLO response");
                 filter_ehlo = 1;
+
+                /* A new message */
+                logline[0] = 0;
             }
 
             /*
@@ -782,7 +785,8 @@ static int smtp_passthru(clamsmtp_context_t* ctx)
                 add_to_logline(logline, "to=", ctx->line + r);
 
             /* Reset log line */
-            else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)))
+            else if(is_first_word(ctx->line, RSET_CMD, KL(RSET_CMD)) ||
+                    is_first_word(ctx->line, HELO_CMD, KL(HELO_CMD)))
                 logline[0] = 0;
 
             /* All other commands just get passed through to server */

@@ -72,11 +72,13 @@ The various settings are as follows:
 This is the command used to filter email through. If not specified then no 
 filtering will be done. Specify all the arguments the command needs as you 
 would on a command-line. 
+.Pp
 [ Default: no filtering ]
 .It Ar FilterTimeout
 The amount of time in seconds to wait for the 
 .Ar FilterCommand
 to process email data.
+.Pp
 [ Default: 30 seconds ] 
 .It Ar FilterType
 When set to 'pipe' the email data is piped through the 
@@ -87,45 +89,74 @@ to a file and the file name is passed to the
 using the 
 .Ar EMAIL
 environment variable.
+.Pp
+[ Default: pipe ]
+.It Ar Header
+A header to add to scanned messages. Put an empty value to suppress adding
+a header. You can include the following special formatting characters in the
+string to include special values:
+.Bl -inset
+.It Ar %i 
+Client IP Address
+.It Ar %l 
+Local IP Address
+.It Ar %d 
+Current Date
+.El
+.Pp
+You can also include the standard \\r or \\n escapes.
+.Pp
+[ Optional ]
 .It Ar KeepAlives
 On slow connections the server will sometimes timeout before 
 .Xr proxsmtpd 8 
 is finished filtering the file. This option sends NOOP's to the server
 to keep the connection alive. Specify the number of seconds, or 0
 to disable.
+.Pp
 [ Default: 0 ]
 .It Ar Listen
 The address and port to listen for SMTP connections on. See syntax of 
 addresses below. 
+.Pp
 [ Default: port 10025 on all local IP addresses ] 
 .It Ar MaxConnections
 Specifies the maximum number of connections to accept at once. 
+.Pp
 [ Default: 64 ]
 .It Ar OutAddress
 The address of the SMTP server to send email to once it's been scanned. See 
 syntax of addreses below. 
+.Pp
 [ Required ]
 .It Ar TempDirectory
 The directory to write temp files to. 
+.Pp
 [ Default:
 .Pa /tmp
 ]
 .It Ar TimeOut
 The number of seconds to wait while reading data from network connections.
+.Pp
 [ Default: 180 seconds ]
 .It Ar TransparentProxy
 This option enables transparent proxy support, which allows you to route all 
 SMTP traffic that's going through a gateway through proxsmtp which will then 
 send it on to its final destination. This setup usually involves firewall 
 rules which redirect traffic to proxsmtp, and the setup varies from OS to OS.
+.Pp
+[ Default: off ]
 .It Ar User
 The user to run as. If this option is specified then
 .Xr proxsmtpd 8
 must be started as root. It will then drop root privileges and run as the 
 specified user. The user can either be a name or a numerical user id.
+.Pp
+[ Optional ]
 .It Ar XClient
 Send an XCLIENT command to the receiving server. This is useful for forwarding
 client addresses and connection info to servers that support this feature.
+.Pp
 [ Default: off ]
 .El
 .Sh ADDRESSES

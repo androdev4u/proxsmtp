@@ -1,4 +1,9 @@
-1.1  [2004-01-27]
+1.2
+  - Don't leak file descriptors when clamsmtpd can't connect to outgoing
+  	SMTP server [Chris Mason]
+  - 'Header' configuration option with special format arguments [Olivier Beyssac]
+
+1.1  [2005-01-27]
   - Fixed crasher when outgoing connection couldn't be established
   - Removed erroneous chown line from clamsmtpd.sh
 

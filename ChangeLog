@@ -1,4 +1,5 @@
-1.1
+1.1  [2004-01-27]
+  - Fixed crasher when outgoing connection couldn't be established
   - Removed erroneous chown line from clamsmtpd.sh
 
 1.0  [2004-12-02]

@@ -67,6 +67,7 @@ typedef struct spio
     int fd;                             /* The file descriptor wrapped */
     const char* name;                   /* The name for logging */
     time_t last_action;                 /* Time of last action on descriptor */
+    char peername[MAXPATHLEN];          /* Name of the peer on other side of socket */
 
     /* Internal use only */
     char line[SP_LINE_LENGTH];
@@ -77,8 +78,11 @@ spio_t;
 
 #define spio_valid(io)      ((io)->fd != -1)
 
-/* Setup the io structure (allocated elsewhere */
+/* Setup the io structure (allocated elsewhere) */
 void spio_init(spio_t* io, const char* name);
+
+/* Attach an open descriptor to a socket, optionally returning the peer */
+void spio_attach(struct spctx* ctx, spio_t* io, int fd, struct sockaddr_any* peer);
 
 /* Connect and disconnect from sockets */
 int  spio_connect(struct spctx* ctx, spio_t* io, const struct sockaddr_any* sany, const char* addrname);

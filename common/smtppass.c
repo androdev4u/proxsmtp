@@ -178,7 +178,7 @@ static void pid_file(int write);
 static void connection_loop(int sock);
 static void* thread_main(void* arg);
 static int smtp_passthru(spctx_t* ctx);
-static int connect_out(spctx_t* ctx);
+static int make_connections(spctx_t* ctx, int client);
 static int read_server_response(spctx_t* ctx);
 static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
@@ -584,16 +584,16 @@ static spctx_t* init_thread(int fd)
                 g_unique_id++;
         sp_unlock();
 
-        ctx->client.fd = fd;
-        ASSERT(ctx->client.fd != -1);
-        sp_messagex(ctx, LOG_DEBUG, "processing %d on thread %x", ctx->client.fd, (int)pthread_self());
+        sp_messagex(ctx, LOG_DEBUG, "processing %d on thread %x", fd, (int)pthread_self());
 
         /* Connect to the outgoing server ... */
-        if(connect_out(ctx) == -1)
+        if(make_connections(ctx, fd) == -1)
         {
             cb_del_context(ctx);
             ctx = NULL;
         }
+
+        ASSERT(ctx->client.fd != -1);
     }
 
     return ctx;
@@ -694,7 +694,7 @@ cleanup:
     return (void*)(ret == 0 ? 0 : 1);
 }
 
-static int connect_out(spctx_t* ctx)
+static int make_connections(spctx_t* ctx, int client)
 {
     struct sockaddr_any peeraddr;
     struct sockaddr_any addr;
@@ -702,15 +702,11 @@ static int connect_out(spctx_t* ctx)
     char buf[MAXPATHLEN];
     const char* outname;
 
-    memset(&peeraddr, 0, sizeof(peeraddr));
-    SANY_LEN(peeraddr) = sizeof(peeraddr);
+    ASSERT(client != -1);
 
-    /* Get the peer name */
-    if(getpeername(ctx->client.fd, &SANY_ADDR(peeraddr), &SANY_LEN(peeraddr)) == -1 ||
-       sock_any_ntop(&peeraddr, buf, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
-        sp_message(ctx, LOG_WARNING, "couldn't get peer address");
-    else
-        sp_messagex(ctx, LOG_INFO, "accepted connection from: %s", buf);
+    /* Setup the incoming connection. This also fills in peeraddr for us */
+    spio_attach(ctx, &(ctx->client), client, &peeraddr);
+    sp_messagex(ctx, LOG_INFO, "accepted connection from: %s", ctx->client.peername);
 
     /* Create the server connection address */
     outaddr = &(g_state.outaddr);
@@ -1426,6 +1422,12 @@ void sp_setup_forked(spctx_t* ctx, int file)
 
     if(file && ctx->cachename[0])
         setenv("EMAIL", ctx->cachename, 1);
+
+    if(spio_valid(&(ctx->client)))
+        setenv("CLIENT", ctx->client.peername, 1);
+
+    if(spio_valid(&(ctx->server)))
+        setenv("SERVER", ctx->server.peername, 1);
 
     setenv("TMPDIR", g_state.directory, 1);
 }

@@ -110,43 +110,67 @@ void spio_init(spio_t* io, const char* name)
     io->fd = -1;
 }
 
-int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sany,
-                 const char* addrname)
+void spio_attach(spctx_t* ctx, spio_t* io, int fd, struct sockaddr_any* peer)
 {
-    int ret = 0;
+    struct sockaddr_any peeraddr;
 
-    ASSERT(ctx && io && sany && addrname);
-    ASSERT(io->fd == -1);
+    io->fd = fd;
 
-    if((io->fd = socket(SANY_TYPE(*sany), SOCK_STREAM, 0)) == -1)
-        RETURN(-1);
+    /* If the caller doesn't want the peer then use our own */
+    if (peer == NULL)
+        peer = &peeraddr;
 
-    if(setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1 ||
-       setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1)
-        sp_messagex(ctx, LOG_WARNING, "couldn't set timeouts on connection");
+    memset(peer, 0, sizeof(*peer));
+    SANY_LEN(*peer) = sizeof(*peer);
 
-    fcntl(io->fd, F_SETFD, fcntl(io->fd, F_GETFD, 0) | FD_CLOEXEC);
-
-    if(connect(io->fd, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
-        RETURN(-1);
+    if(getpeername(fd, &SANY_ADDR(*peer), &SANY_LEN(*peer)) == -1 ||
+       sock_any_ntop(peer, io->peername, MAXPATHLEN, SANY_OPT_NOPORT) == -1)
+    {
+        sp_message(ctx, LOG_WARNING, "%s: couldn't get peer address", GET_IO_NAME(io));
+        strlcpy(io->peername, "UNKNOWN", MAXPATHLEN);
+    }
 
     /* As a double check */
     io->line[0] = 0;
     io->_nx = NULL;
     io->_ln = 0;
+}
+
+int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sany,
+                 const char* addrname)
+{
+    int ret = 0;
+    int fd;
+
+    ASSERT(ctx && io && sany && addrname);
+    ASSERT(io->fd == -1);
+
+    if((fd = socket(SANY_TYPE(*sany), SOCK_STREAM, 0)) == -1)
+        RETURN(-1);
+
+    if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1 ||
+       setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1)
+        sp_messagex(ctx, LOG_WARNING, "%s: couldn't set timeouts on connection", GET_IO_NAME(io));
+
+    fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
+
+    if(connect(fd, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
+        RETURN(-1);
+
+    spio_attach(ctx, io, fd, NULL);
 
 cleanup:
     if(ret < 0)
     {
-        if(io->fd != -1)
-            close(io->fd);
+        if(spio_valid(io))
+            close_raw(&(io->fd));
 
-        sp_message(ctx, LOG_ERR, "couldn't connect to: %s", addrname);
+        sp_message(ctx, LOG_ERR, "%s: couldn't connect to: %s", GET_IO_NAME(io), addrname);
         return -1;
     }
 
     ASSERT(io->fd != -1);
-    sp_messagex(ctx, LOG_DEBUG, "%s connected to: %s", GET_IO_NAME(io), addrname);
+    sp_messagex(ctx, LOG_DEBUG, "%s connected to: %s", GET_IO_NAME(io), io->peername);
     return 0;
 }
 
@@ -340,11 +364,11 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
             }
 
             if(errno == ECONNRESET) /* Not usually a big deal so supresse the error */
-                sp_messagex(ctx, LOG_DEBUG, "connection disconnected by peer: %s", GET_IO_NAME(io));
+                sp_messagex(ctx, LOG_DEBUG, "%s: connection disconnected by peer", GET_IO_NAME(io));
             else if(errno == EAGAIN)
-                sp_messagex(ctx, LOG_WARNING, "network read operation timed out: %s", GET_IO_NAME(io));
+                sp_messagex(ctx, LOG_WARNING, "%s: network read operation timed out", GET_IO_NAME(io));
             else
-                sp_message(ctx, LOG_ERR, "couldn't read data from socket: %s", GET_IO_NAME(io));
+                sp_message(ctx, LOG_ERR, "%s: couldn't read data from socket", GET_IO_NAME(io));
 
             /*
              * The basic logic here is that if we've had a fatal error
@@ -434,7 +458,7 @@ int spio_read_line(spctx_t* ctx, spio_t* io, int opts)
 
     if(!spio_valid(io))
     {
-        sp_messagex(ctx, LOG_WARNING, "tried to read from a closed connection");
+        sp_messagex(ctx, LOG_WARNING, "%s: tried to read from a closed connection", GET_IO_NAME(io));
         return 0;
     }
 
@@ -478,7 +502,7 @@ int spio_write_data(spctx_t* ctx, spio_t* io, const char* data)
 
     if(!spio_valid(io))
     {
-        sp_message(ctx, LOG_ERR, "connection closed. can't write data");
+        sp_message(ctx, LOG_ERR, "%s: connection closed. can't write data", GET_IO_NAME(io));
         return -1;
     }
 
@@ -527,9 +551,9 @@ int spio_write_data_raw(spctx_t* ctx, spio_t* io, unsigned char* buf, int len)
             close_raw(&(io->fd));
 
             if(errno == EAGAIN)
-                sp_messagex(ctx, LOG_WARNING, "network write operation timed out: %s", GET_IO_NAME(io));
+                sp_messagex(ctx, LOG_WARNING, "%s: network write operation timed out", GET_IO_NAME(io));
             else
-                sp_message(ctx, LOG_ERR, "couldn't write data to socket: %s", GET_IO_NAME(io));
+                sp_message(ctx, LOG_ERR, "%s: couldn't write data to socket", GET_IO_NAME(io));
 
             return -1;
         }
@@ -571,7 +595,7 @@ void spio_read_junk(spctx_t* ctx, spio_t* io)
 
         if(!said && *t)
         {
-            sp_messagex(ctx, LOG_DEBUG, "received junk data from daemon");
+            sp_messagex(ctx, LOG_DEBUG, "%s: received junk data from daemon", GET_IO_NAME(io));
             said = 1;
         }
     }

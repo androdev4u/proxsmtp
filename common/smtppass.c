@@ -33,7 +33,7 @@
  *
  * CONTRIBUTORS
  *  Nate Nielsen <nielsen@memberwebs.com>
- *  Yamamoto Takao <takao@oakat.org>
+ *  Andreas Steinmetz <ast@domdv.de>
  */
 
 #include <sys/time.h>

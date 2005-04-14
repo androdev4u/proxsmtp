@@ -1457,6 +1457,8 @@ int sp_done_data(spctx_t* ctx)
     ASSERT(ctx->cachename[0]);  /* Must still be around */
     ASSERT(!ctx->cachefile);    /* File must be closed */
 
+    memset(header, 0, sizeof(header));
+
     /* Open the file */
     file = fopen(ctx->cachename, "r");
     if(file == NULL)

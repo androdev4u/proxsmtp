@@ -1,7 +1,11 @@
-1.2
+1.2.1 [2005-04-15]
+  - Fixed bug (introduced in 1.2) when 'Header' option is not present.
+
+1.2  [2005-03-24]
   - Don't leak file descriptors when clamsmtpd can't connect to outgoing
   	SMTP server [Chris Mason]
   - 'Header' configuration option with special format arguments [Olivier Beyssac]
+  - Supress weird warnings when looking up names of local unix connections.
 
 1.1  [2005-01-27]
   - Fixed crasher when outgoing connection couldn't be established

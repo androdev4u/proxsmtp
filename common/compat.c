@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004, Nate Nielsen
+ * Copyright (c) 2004-2005, Nate Nielsen
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -179,4 +179,235 @@ size_t strlcat(char* dst, const char* src, size_t siz)
 
 #endif
 
+#ifndef HAVE_SETENV
+
+#include <stdio.h>
+
+int setenv(const char* name, const char* value, int overwrite)
+{
+	char* t;
+	int r;
+	if(getenv(name) && !overwrite)
+		return 0;
+	t = (char*)malloc((strlen(name) + strlen(value) + 2) * sizeof(char));
+	if(!t) return -1;
+	sprintf(t, "%s=%s", name, value);
+	r = putenv(t);
+	free(t);
+	return r;
+}
+
+#endif
+
+#ifndef HAVE_DAEMON
+
+#include <sys/types.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <fcntl.h>
+
+int daemon(int nochdir, int noclose)
+{
+	struct sigaction osa, sa;
+	int oerrno, fd, osa_ok;
+	pid_t newgrp;
+
+	/* A SIGHUP may be thrown when the parent exits below. */
+	sigemptyset(&sa.sa_mask);
+	sa.sa_handler = SIG_IGN;
+	sa.sa_flags = 0;
+	osa_ok = sigaction(SIGHUP, &sa, &osa);
+
+	switch(fork())
+	{
+	case -1:
+		return -1;
+	case 0:
+		break;
+	default:
+		_exit(0);
+	}
+
+	newgrp = setsid();
+	oerrno = errno;
+	if(osa_ok != -1)
+		sigaction(SIGHUP, &osa, NULL);
+	if(newgrp == -1)
+	{
+		errno = oerrno;
+		return -1;
+	}
+	if(!nochdir)
+		chdir("/");
+        if(!noclose && (fd = open(_PATH_DEVNULL, O_RDWR, 0)) != -1)
+	{
+		dup2(fd, STDIN_FILENO);
+		dup2(fd, STDOUT_FILENO);
+		dup2(fd, STDERR_FILENO);
+		if(fd > 2)
+			close(fd);
+        }
+        return 0;
+
+}
+
+#endif
+
+#ifndef HAVE_ERR_H
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
+
+extern char** __argv;
+
+static const char* calc_prog_name()
+{
+	static char prognamebuf[256];
+	static int prepared = 0;
+
+	if(!prepared)
+	{
+		const char* beg = strrchr(__argv[0], '\\');
+		const char* temp = strrchr(__argv[0], '/');
+		beg = (beg > temp) ? beg : temp;
+		beg = (beg) ? beg + 1 : __argv[0];
+
+		temp = strrchr(__argv[0], '.');
+		temp = (temp > beg) ? temp : __argv[0] + strlen(__argv[0]);
+
+		if((temp - beg) > 255)
+			temp = beg + 255;
+
+		strncpy(prognamebuf, beg, temp - beg);
+		prognamebuf[temp - beg] = 0;
+		prepared = 1;
+	}
+
+	return prognamebuf;
+}
+
+static FILE* err_file; /* file to use for error output */
+
+/*
+ * This is declared to take a `void *' so that the caller is not required
+ * to include <stdio.h> first.  However, it is really a `FILE *', and the
+ * manual page documents it as such.
+ */
+void err_set_file(void *fp)
+{
+	if (fp)
+		err_file = fp;
+	else
+		err_file = stderr;
+}
+
+void err(int eval, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	verrc(eval, errno, fmt, ap);
+	va_end(ap);
+}
+
+void verr(int eval, const char *fmt, va_list ap)
+{
+	verrc(eval, errno, fmt, ap);
+}
+
+void errc(int eval, int code, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	verrc(eval, code, fmt, ap);
+	va_end(ap);
+}
+
+void verrc(int eval, int code, const char *fmt, va_list ap)
+{
+	if (err_file == 0)
+		err_set_file((FILE *)0);
+	fprintf(err_file, "%s: ", calc_prog_name());
+	if (fmt != NULL) {
+		vfprintf(err_file, fmt, ap);
+		fprintf(err_file, ": ");
+	}
+	fprintf(err_file, "%s\n", strerror(code));
+	exit(eval);
+}
+
+void errx(int eval, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	verrx(eval, fmt, ap);
+	va_end(ap);
+}
+
+void verrx(int eval, const char *fmt, va_list ap)
+{
+	if (err_file == 0)
+		err_set_file((FILE *)0);
+	fprintf(err_file, "%s: ", calc_prog_name());
+	if (fmt != NULL)
+		vfprintf(err_file, fmt, ap);
+	fprintf(err_file, "\n");
+	exit(eval);
+}
+
+void warn(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	vwarnc(errno, fmt, ap);
+	va_end(ap);
+}
+
+void vwarn(const char *fmt, va_list ap)
+{
+	vwarnc(errno, fmt, ap);
+}
+
+void warnc(int code, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	vwarnc(code, fmt, ap);
+	va_end(ap);
+}
+
+void vwarnc(int code, const char *fmt, va_list ap)
+{
+	if (err_file == 0)
+		err_set_file((FILE *)0);
+	fprintf(err_file, "%s: ", calc_prog_name());
+	if (fmt != NULL)
+	{
+		vfprintf(err_file, fmt, ap);
+		fprintf(err_file, ": ");
+	}
+	fprintf(err_file, "%s\n", strerror(code));
+}
+
+void warnx(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	vwarnx(fmt, ap);
+	va_end(ap);
+}
+
+void vwarnx(const char *fmt, va_list ap)
+{
+	if(err_file == 0)
+		err_set_file((FILE*)0);
+	fprintf(err_file, "%s: ", calc_prog_name());
+	if(fmt != NULL)
+		vfprintf(err_file, fmt, ap);
+	fprintf(err_file, "\n");
+}
+
+#endif
 

@@ -45,14 +45,13 @@
 #include <sys/stat.h>
 
 #include <ctype.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <syslog.h>
 #include <signal.h>
 #include <errno.h>
-#include <err.h>
-#include <paths.h>
 #include <stdarg.h>
 #include <pwd.h>
 #include <time.h>
@@ -1328,7 +1327,6 @@ static void make_date(spctx_t* ctx, char* date)
 {
     size_t date_len;
     struct tm t2;
-    long gmt;
     time_t t;
 
     /* Get a basic date like: 'Wed Jun 30 21:49:08 1993' */
@@ -1341,13 +1339,18 @@ static void make_date(spctx_t* ctx, char* date)
         return;
     }
 
-    /* Now add the TZ */
     trim_end(date);
-    gmt = t2.tm_gmtoff;
     date_len = strlen(date);
 
-    snprintf(date + date_len, MAX_DATE_LENGTH - date_len, " %+03d%02d (%s)",
-             (int)(gmt / 3600), (int)(gmt % 3600), t2.tm_zone);
+    {
+#ifdef HAVE_TM_GMTOFF
+        time_t timezone = t2.tm_gmtoff;
+        char *tzname[2] = { t2.tm_zone, "" };
+#endif
+
+        snprintf(date + date_len, MAX_DATE_LENGTH - date_len, " %+03d%02d (%s)",
+                (int)(timezone / 3600), (int)(timezone % 3600), tzname[2]);
+    }
 
     /* Break it off just in case */
     date[MAX_DATE_LENGTH - 1] = 0;

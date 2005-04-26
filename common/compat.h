@@ -83,4 +83,39 @@ size_t strlcat(char *dst, const char *src, size_t size);
 size_t strlcpy(char *dst, const char *src, size_t size);
 #endif
 
+#ifndef HAVE_SETENV
+int setenv(const char* name, const char* value, int overwrite);
+#endif
+
+#ifndef HAVE_DAEMON
+int daemon(int nochdir, int noclose);
+#endif
+
+#ifdef HAVE_ERR_H
+#include <err.h>
+#else
+#include <stdarg.h>
+void err_set_file(void *fp);
+void err_set_exit(void (*ef)(int));
+void err(int eval, const char *fmt, ...);
+void verr(int eval, const char *fmt, va_list ap);
+void errc(int eval, int code, const char *fmt, ...);
+void verrc(int eval, int code, const char *fmt, va_list ap);
+void errx(int eval, const char *fmt, ...);
+void verrx(int eval, const char *fmt, va_list ap);
+void warn(const char *fmt, ...);
+void vwarn(const char *fmt, va_list ap);
+void warnc(int code, const char *fmt, ...);
+void vwarnc(int code, const char *fmt, va_list ap);
+void warnx(const char *fmt, ...);
+void vwarnx(const char *fmt, va_list ap);
+#endif
+
+#ifdef HAVE_PATHS_H
+#include <paths.h>
+#else
+#define _PATH_DEVNULL "/dev/null"
+#define _PATH_TMP "/tmp"
+#endif
+
 #endif /* _COMPAT_H_ */

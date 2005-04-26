@@ -56,8 +56,8 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <errno.h>
-#include <err.h>
 
+#include "compat.h"
 #include "usuals.h"
 #include "sock_any.h"
 #include "stringx.h"

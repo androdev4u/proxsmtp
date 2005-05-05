@@ -164,7 +164,7 @@ int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sany,
 
     if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1 ||
        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1)
-        sp_messagex(ctx, LOG_WARNING, "%s: couldn't set timeouts on connection", GET_IO_NAME(io));
+        sp_messagex(ctx, LOG_DEBUG, "%s: couldn't set timeouts on connection", GET_IO_NAME(io));
 
     fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
 

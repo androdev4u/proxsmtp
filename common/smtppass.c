@@ -492,7 +492,7 @@ static void connection_loop(int sock)
         /* Set timeouts on client */
         if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) < 0 ||
            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) < 0)
-            sp_message(NULL, LOG_WARNING, "couldn't set timeouts on incoming connection");
+            sp_message(NULL, LOG_DEBUG, "couldn't set timeouts on incoming connection");
 
         fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
 

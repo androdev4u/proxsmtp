@@ -1342,15 +1342,8 @@ static void make_date(spctx_t* ctx, char* date)
     trim_end(date);
     date_len = strlen(date);
 
-    {
-#ifdef HAVE_TM_GMTOFF
-        time_t timezone = t2.tm_gmtoff;
-        char *tzname[2] = { t2.tm_zone, "" };
-#endif
-
-        snprintf(date + date_len, MAX_DATE_LENGTH - date_len, " %+03d%02d (%s)",
-                (int)(timezone / 3600), (int)(timezone % 3600), tzname[2]);
-    }
+    snprintf(date + date_len, MAX_DATE_LENGTH - date_len, " %+03d%02d (%s)",
+             (int)(timezone / 3600), (int)(timezone % 3600), tzname[t2.tm_isdst ? 1 : 0]);
 
     /* Break it off just in case */
     date[MAX_DATE_LENGTH - 1] = 0;

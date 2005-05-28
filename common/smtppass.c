@@ -275,6 +275,21 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
 
     sp_messagex(NULL, LOG_DEBUG, "starting up (%s)...", VERSION);
 
+    /* Create the socket */
+    sock = socket(SANY_TYPE(g_state.listenaddr), SOCK_STREAM, 0);
+    if(sock < 0)
+        err(1, "couldn't open socket");
+
+    fcntl(sock, F_SETFD, fcntl(sock, F_GETFD, 0) | FD_CLOEXEC);
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true));
+
+    /* Unlink the socket file if it exists */
+    if(SANY_TYPE(g_state.listenaddr) == AF_UNIX)
+        unlink(g_state.listenname);
+
+    if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
+        err(1, "couldn't bind to address: %s", g_state.listenname);
+
     /* Drop privileges before daemonizing */
     drop_privileges();
 
@@ -293,27 +308,6 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
 
         /* Open the system log */
         openlog(g_state.name, 0, LOG_MAIL);
-    }
-
-    /* Create the socket */
-    sock = socket(SANY_TYPE(g_state.listenaddr), SOCK_STREAM, 0);
-    if(sock < 0)
-    {
-        sp_message(NULL, LOG_CRIT, "couldn't open socket");
-        exit(1);
-    }
-
-    fcntl(sock, F_SETFD, fcntl(sock, F_GETFD, 0) | FD_CLOEXEC);
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true));
-
-    /* Unlink the socket file if it exists */
-    if(SANY_TYPE(g_state.listenaddr) == AF_UNIX)
-        unlink(g_state.listenname);
-
-    if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
-    {
-        sp_message(NULL, LOG_CRIT, "couldn't bind to address: %s", g_state.listenname);
-        exit(1);
     }
 
     /* Let 5 connections queue up */

@@ -273,7 +273,7 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
     else if(g_state.outname != NULL && g_state.transparent)
         warnx("the " CFG_OUTADDR " option will be ignored when " CFG_TRANSPARENT " is enabled");
 
-    sp_messagex(NULL, LOG_DEBUG, "starting up...");
+    sp_messagex(NULL, LOG_DEBUG, "starting up (%s)...", VERSION);
 
     /* Drop privileges before daemonizing */
     drop_privileges();
@@ -1485,7 +1485,7 @@ int sp_done_data(spctx_t* ctx)
 
         sp_messagex(ctx, LOG_DEBUG, "server refused data transfer");
 
-        RETURN(-1);
+        RETURN(0);
     }
 
     sp_messagex(ctx, LOG_DEBUG, "sending from cache file: %s", ctx->cachename);

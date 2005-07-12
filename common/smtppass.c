@@ -290,6 +290,13 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
     if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
         err(1, "couldn't bind to address: %s", g_state.listenname);
 
+    /* Let 5 connections queue up */
+    if(listen(sock, 5) != 0)
+    {
+        sp_message(NULL, LOG_CRIT, "couldn't listen on socket");
+        exit(1);
+    }
+
     /* Drop privileges before daemonizing */
     drop_privileges();
 
@@ -308,13 +315,6 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
 
         /* Open the system log */
         openlog(g_state.name, 0, LOG_MAIL);
-    }
-
-    /* Let 5 connections queue up */
-    if(listen(sock, 5) != 0)
-    {
-        sp_message(NULL, LOG_CRIT, "couldn't listen on socket");
-        exit(1);
     }
 
     sp_messagex(NULL, LOG_DEBUG, "created socket: %s", g_state.listenname);

@@ -116,7 +116,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
     #define IPV4_PORT_CHARS
     #define IPV4_CHARS  "0123456789."
     #define IPV4_MIN    3
-    #define IPV4_MAX    18
+    #define IPV4_MAX    21
 
     int port = 0;
     t = NULL;
@@ -166,7 +166,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
   {
     #define IPV6_CHARS  "0123456789:"
     #define IPV6_MIN    3
-    #define IPV6_MAX    48
+    #define IPV6_MAX    51
 
     int port = -1;
     t = NULL;

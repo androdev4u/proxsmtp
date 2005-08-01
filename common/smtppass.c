@@ -1340,11 +1340,41 @@ static void make_date(spctx_t* ctx, char* date)
 #ifdef HAVE_TM_GMTOFF
         time_t timezone = t2.tm_gmtoff;
         const char *tzname[2] = { t2.tm_zone, t2.tm_zone };
-#else
-        tzset();
-#endif
+
         snprintf(date + date_len, MAX_DATE_LENGTH - date_len, " %+03d%02d (%s)",
-                 (int)(timezone / 3600), (int)(timezone % 3600), tzname[t2.tm_isdst ? 1 : 0]);
+                 (int)(timezone / 3600), (int)(timezone % 3600),
+                 tzname[t2.tm_isdst ? 1 : 0]);
+#else
+        /* Apparently Solaris needs this nasty hack.... */
+        #define DAY_MIN         (24 * HOUR_MIN)
+        #define HOUR_MIN        60
+        #define MIN_SEC         60
+
+        struct tm gmt;
+        struct tm *lt;
+        int off;
+
+        gmt = *gmtime(&t);
+        lt = localtime(&t);
+        off = (lt->tm_hour - gmt.tm_hour) * HOUR_MIN + lt->tm_min - gmt.tm_min;
+
+        if (lt->tm_year < gmt.tm_year)
+            off -= DAY_MIN;
+        else if (lt->tm_year > gmt.tm_year)
+            off += DAY_MIN;
+        else if (lt->tm_yday < gmt.tm_yday)
+            off -= DAY_MIN;
+        else if (lt->tm_yday > gmt.tm_yday)
+            off += DAY_MIN;
+        if (lt->tm_sec <= gmt.tm_sec - MIN_SEC)
+            off -= 1;
+        else if (lt->tm_sec >= gmt.tm_sec + MIN_SEC)
+            off += 1;
+
+        snprintf(date + date_len, MAX_DATE_LENGTH - date_len,
+                 " %+03d%02d (%s)", (int)(off / HOUR_MIN), (int)(abs(off) % HOUR_MIN),
+                 tzname[lt->tm_isdst ? 1 : 0]);
+#endif
     }
 
     /* Break it off just in case */

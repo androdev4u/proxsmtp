@@ -38,6 +38,8 @@
  *  Olivier Beyssac <ob@r14.freenix.org>
  */
 
+#define _GNU_SOURCE
+
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -1478,14 +1480,20 @@ int sp_done_data(spctx_t* ctx)
     FILE* file = 0;
     int had_header = 0;
     int ret = 0;
-    char line[SP_LINE_LENGTH];
+    char *line;
     char header[MAX_HEADER_LENGTH];
-    size_t header_len;
+    size_t header_len, line_len;
+    ssize_t rc;
 
     ASSERT(ctx->cachename[0]);  /* Must still be around */
     ASSERT(!ctx->cachefile);    /* File must be closed */
 
     memset(header, 0, sizeof(header));
+
+    /* Alloc line buffer */
+    line_len = SP_LINE_LENGTH;
+    if((line = (char *)malloc(line_len)) == NULL)
+        RETURN(-1);
 
     /* Open the file */
     file = fopen(ctx->cachename, "r");
@@ -1528,7 +1536,7 @@ int sp_done_data(spctx_t* ctx)
     }
 
     /* Transfer actual file data */
-    while(fgets(line, SP_LINE_LENGTH, file) != NULL)
+    while((rc = getline(&line, &line_len, file)) != -1)
     {
         /*
          * If the line is <CRLF>.<CRLF> we need to change it so that
@@ -1555,7 +1563,7 @@ int sp_done_data(spctx_t* ctx)
             }
         }
 
-        if(spio_write_data_raw(ctx, &(ctx->server), line, strlen(line)) == -1)
+        if(spio_write_data_raw(ctx, &(ctx->server), line, rc) == -1)
             RETURN(-1);
     }
 
@@ -1580,6 +1588,8 @@ int sp_done_data(spctx_t* ctx)
 
 cleanup:
 
+	if(line)
+		free(line);
     if(file)
         fclose(file); /* read-only so no error check */
 

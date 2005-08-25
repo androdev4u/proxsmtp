@@ -254,6 +254,77 @@ int daemon(int nochdir, int noclose)
 
 #endif
 
+#ifndef HAVE_GETLINE
+
+ssize_t getline(char** lineptr, size_t* n, FILE* stream)
+{
+    return getdelim(lineptr, n, '\n', stream);
+}
+
+#endif
+
+#ifndef HAVE_GETDELIM
+
+ssize_t getdelim(char** lineptr, size_t* n, int delim, FILE* stream)
+{
+    size_t written = 0;
+    int allocated, ch;
+    char* p;
+
+    if(!n || !lineptr || !stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* Track whether we allocated this or not */
+    allocated = !(*lineptr);
+
+    for(;;)
+    {
+        if(!*lineptr)
+            *n = 0;
+
+        /* Reallocate if we need more space */
+        if(written == *n - 1)
+        {
+            *n = *n ? 256 : *n * 2;
+            if(!(p = (char*)realloc(*lineptr, *n)))
+            {
+                if(allocated && *lineptr)
+                    free(*lineptr);
+                errno = ENOMEM;
+                return -1;
+            }
+            *lineptr = p;
+        }
+
+        while(written < *n - 1)
+        {
+            ch = fgetc(stream);
+
+            if(ferror(stream))
+            {
+                if(allocated && *lineptr)
+                    free(*lineptr);
+                return -1;
+            }
+
+            if(ch != EOF)
+                (*lineptr)[written++] = ch;
+
+            /* Done, null terminate, return */
+            if(ch == EOF || ch == delim)
+            {
+                (*lineptr)[written] = 0;
+                return written ? written : -1;
+            }
+        }
+    }
+}
+
+#endif
+
 #ifndef HAVE_ERR_H
 
 #include <stdlib.h>

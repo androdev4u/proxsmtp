@@ -91,6 +91,14 @@ int setenv(const char* name, const char* value, int overwrite);
 int daemon(int nochdir, int noclose);
 #endif
 
+#ifndef HAVE_GETLINE
+ssize_t getline(char** lineptr, size_t* n, FILE* stream);
+#endif
+
+#ifndef HAVE_GETDELIM
+ssize_t getdelim(char** lineptr, size_t* n, int delim, FILE* stream);
+#endif
+
 #ifdef HAVE_ERR_H
 #include <err.h>
 #else

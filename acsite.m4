@@ -198,3 +198,33 @@ fi
 AC_LANG_RESTORE
 ])dnl ACX_PTHREAD
 
+
+
+
+AC_DEFUN(AC_CHECK_GLOBAL,
+[
+for ac_global in $1
+do
+   ac_tr_global=HAVE_`echo $ac_global | tr 'abcdefghijklmnopqrstuvwxyz' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'`
+   AC_MSG_CHECKING([for global variable ${ac_global}])
+   AC_CACHE_VAL(ac_cv_global_$ac_global,
+   [
+    AC_TRY_LINK(dnl
+    [/* no includes */],
+    [ extern long int $ac_global;  exit((int)$ac_global)],
+    eval "ac_cv_global_${ac_global}=yes",
+    eval "ac_cv_global_${ac_global}=no"
+    )
+   ]
+   )
+  if eval "test \"`echo '$ac_cv_global_'$ac_global`\" = yes"; then
+    AC_MSG_RESULT(yes)
+    AC_DEFINE_UNQUOTED($ac_tr_global,1,Define if the global variable $ac_global is available)
+  else
+    AC_MSG_RESULT(no)
+  fi
+done
+])
+
+
+

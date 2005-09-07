@@ -121,8 +121,13 @@ void vwarnx(const char *fmt, va_list ap);
 
 #ifdef HAVE_PATHS_H
 #include <paths.h>
-#else
+#endif
+
+#ifndef _PATH_DEVNULL
 #define _PATH_DEVNULL "/dev/null"
+#endif
+
+#ifndef _PATH_TMP
 #define _PATH_TMP "/tmp"
 #endif
 

@@ -1535,8 +1535,8 @@ int sp_done_data(spctx_t* ctx)
     /* If we have to prepend the header, do it */
     if(header[0] && g_state.header_prepend)
     {
-	    if(spio_write_data_raw(ctx, &(ctx->server), (char*)header, header_len) == -1 ||
-	       spio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
+	    if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)header, header_len) == -1 ||
+	       spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)CRLF, KL(CRLF)) == -1)
 	        RETURN(-1);
 	    had_header = 1;
     }
@@ -1561,15 +1561,15 @@ int sp_done_data(spctx_t* ctx)
              */
             if(is_blank_line(line))
             {
-                if(spio_write_data_raw(ctx, &(ctx->server), (char*)header, header_len) == -1 ||
-                   spio_write_data_raw(ctx, &(ctx->server), CRLF, KL(CRLF)) == -1)
+                if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)header, header_len) == -1 ||
+                   spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
 
                 had_header = 1;
             }
         }
 
-        if(spio_write_data_raw(ctx, &(ctx->server), line, rc) == -1)
+        if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)line, rc) == -1)
             RETURN(-1);
     }
 

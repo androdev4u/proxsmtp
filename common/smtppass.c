@@ -1135,6 +1135,10 @@ static char* parse_address(char* line)
      * We parse out emails in the form of <blah@blah.com>
      * as well as accept other addresses.
      */
+
+    if(strncmp(line, "<>", 2) == 0)
+        return("<>");
+
     if(line[0] == '<')
     {
         if((t = strchr(line, '>')) != NULL)

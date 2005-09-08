@@ -66,12 +66,16 @@ fi
 ACX_PTHREAD( , [echo "ERROR: Pthread support not found."; exit 1] )
 
 LIBS="$PTHREAD_LIBS $LIBS"
-CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
+CFLAGS="$CFLAGS $PTHREAD_CFLAGS -D_POSIX_PTHREAD_SEMANTICS"
+
+# Some checks for Solaris
+AC_CHECK_LIB(socket, getsockname)
+AC_CHECK_LIB(nsl, getaddrinfo)
 
 # Checks for header files.
 AC_HEADER_STDC
-AC_CHECK_HEADERS(limits.h,,)
-AC_CHECK_HEADERS([unistd.h stdio.h stddef.h fcntl.h stdlib.h assert.h errno.h stdarg.h err.h string.h], ,
+AC_CHECK_HEADERS([limits.h err.h paths.h],,)
+AC_CHECK_HEADERS([unistd.h stdio.h stddef.h fcntl.h stdlib.h assert.h errno.h stdarg.h string.h netdb.h], ,
 	[echo "ERROR: Required C header missing"; exit 1])
 
 # Check for linux type transparent proxy support

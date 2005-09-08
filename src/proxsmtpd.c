@@ -39,14 +39,12 @@
 #include <sys/param.h>
 #include <sys/wait.h>
 
-#include <paths.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <syslog.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <err.h>
 #include <signal.h>
 
 #include "usuals.h"
@@ -122,6 +120,10 @@ static int wait_process(spctx_t* sp, pid_t pid, int* status);
  *  STARTUP ETC...
  */
 
+#ifndef HAVE___ARGV
+char** __argv;
+#endif
+
 int main(int argc, char* argv[])
 {
     const char* configfile = DEFAULT_CONFIG;
@@ -130,6 +132,10 @@ int main(int argc, char* argv[])
     int ch = 0;
     int r;
     char* t;
+
+#ifndef HAVE___ARGV
+    __argv = argv;
+#endif
 
     /* Setup some defaults */
     memset(&g_pxstate, 0, sizeof(g_pxstate));

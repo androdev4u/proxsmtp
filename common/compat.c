@@ -193,7 +193,8 @@ int setenv(const char* name, const char* value, int overwrite)
 	if(!t) return -1;
 	sprintf(t, "%s=%s", name, value);
 	r = putenv(t);
-	free(t);
+	if(r != 0)
+		free(t);
 	return r;
 }
 

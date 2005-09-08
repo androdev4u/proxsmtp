@@ -77,7 +77,7 @@ typedef struct spio
 }
 spio_t;
 
-#define spio_valid(io)      ((io)->fd != -1)
+#define spio_valid(io)      ((io) && (io)->fd != -1)
 
 /* Setup the io structure (allocated elsewhere) */
 void spio_init(spio_t* io, const char* name);

@@ -3,6 +3,8 @@
   - Less chatty when setting timeouts fail
   - Drop privileges after binding to port. Allows listening on ports < 1024
   - Ported to Solaris
+  - Fix problem with binding to certain 'long' addresses
+  - Support embedded NULLs in email data.
 
 1.2.1 [2005-04-15]
   - Fixed bug (introduced in 1.2) when 'Header' option is not present.

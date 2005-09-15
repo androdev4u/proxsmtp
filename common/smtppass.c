@@ -112,6 +112,7 @@ spthread_t;
 #define ESMTP_BINARY        "BINARYMIME"
 #define ESMTP_CHECK         "CHECKPOINT"
 #define ESMTP_XCLIENT       "XCLIENT"
+#define ESMTP_XEXCH50       "XEXCH50"
 
 #define HELO_CMD            "HELO"
 #define EHLO_CMD            "EHLO"
@@ -1049,7 +1050,8 @@ static int smtp_passthru(spctx_t* ctx)
                        is_first_word(p, ESMTP_CHUNK, KL(ESMTP_CHUNK)) ||
                        is_first_word(p, ESMTP_BINARY, KL(ESMTP_BINARY)) ||
                        is_first_word(p, ESMTP_CHECK, KL(ESMTP_CHECK)) ||
-                       is_first_word(p, ESMTP_XCLIENT, KL(ESMTP_XCLIENT)))
+                       is_first_word(p, ESMTP_XCLIENT, KL(ESMTP_XCLIENT)) ||
+                       is_first_word(p, ESMTP_XEXCH50, KL(ESMTP_XEXCH50)))
                     {
                         sp_messagex(ctx, LOG_DEBUG, "filtered ESMTP feature: %s", trim_space((char*)p));
 

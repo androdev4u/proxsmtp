@@ -270,6 +270,7 @@ ssize_t getdelim(char** lineptr, size_t* n, int delim, FILE* stream)
 {
     size_t written = 0;
     int allocated, ch;
+    ssize_t ret = -1;
     char* p;
 
     if(!n || !lineptr || !stream)
@@ -281,6 +282,11 @@ ssize_t getdelim(char** lineptr, size_t* n, int delim, FILE* stream)
     /* Track whether we allocated this or not */
     allocated = !(*lineptr);
 
+#ifdef HAVE_FLOCKFILE
+    /* Affects performance on Solaris. */
+    flockfile(stream);
+#endif
+
     for(;;)
     {
         if(!*lineptr)
@@ -289,26 +295,32 @@ ssize_t getdelim(char** lineptr, size_t* n, int delim, FILE* stream)
         /* Reallocate if we need more space */
         if(written == *n - 1)
         {
-            *n = *n ? 256 : *n * 2;
+            *n = *n ? *n * 2 : 256;
             if(!(p = (char*)realloc(*lineptr, *n)))
             {
                 if(allocated && *lineptr)
                     free(*lineptr);
                 errno = ENOMEM;
-                return -1;
+                ret = -1;
+                goto finally;
             }
             *lineptr = p;
         }
 
         while(written < *n - 1)
         {
+#ifdef HAVE_FLOCKFILE
+            ch = getc_unlocked(stream);
+#else
             ch = fgetc(stream);
+#endif
 
             if(ferror(stream))
             {
                 if(allocated && *lineptr)
                     free(*lineptr);
-                return -1;
+                ret = -1;
+                goto finally;
             }
 
             if(ch != EOF)
@@ -318,10 +330,17 @@ ssize_t getdelim(char** lineptr, size_t* n, int delim, FILE* stream)
             if(ch == EOF || ch == delim)
             {
                 (*lineptr)[written] = 0;
-                return written ? written : -1;
+                ret = written ? written : -1;
+                goto finally;
             }
         }
     }
+finally:
+
+#ifdef HAVE_FLOCKFILE
+    funlockfile(stream);
+#endif
+    return ret;
 }
 
 #endif

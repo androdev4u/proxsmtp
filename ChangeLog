@@ -5,6 +5,7 @@
   - Ported to Solaris
   - Fix problem with binding to certain 'long' addresses
   - Support embedded NULLs in email data.
+  - Fix problems with empty addresses in logs.
 
 1.2.1 [2005-04-15]
   - Fixed bug (introduced in 1.2) when 'Header' option is not present.

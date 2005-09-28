@@ -340,18 +340,21 @@ static pid_t fork_filter(spctx_t* sp, int* infd, int* outfd, int* errfd)
         {
             close(pipe_i[WRITE_END]);
             r = dup2(pipe_i[READ_END], STDIN);
+			close(pipe_i[READ_END]);
         }
 
         if(r >= 0 && outfd)
         {
             close(pipe_o[READ_END]);
             r = dup2(pipe_o[WRITE_END], STDOUT);
+			close(pipe_o[WRITE_END]);
         }
 
         if(r >= 0 && errfd)
         {
             close(pipe_e[READ_END]);
             r = dup2(pipe_e[WRITE_END], STDERR);
+			close(pipe_e[WRITE_END]);
         }
 
         if(r < 0)
@@ -830,7 +833,7 @@ static void buffer_reject_message(char* data, char* buf, int buflen)
              * Basically if we already have a newline at the end
              * then we need to start a new line
              */
-            if(buf[strlen(buf)] == '\n')
+			if(buf[strlen(buf) - 1] == '\n')
                 buf[0] = 0;
         }
         else

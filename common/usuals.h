@@ -66,9 +66,9 @@
 
 #ifdef _DEBUG
   #include "assert.h"
-  #define ASSERT assert
+  #define ASSERT(x) assert(x)
 #else
-  #define ASSERT
+  #define ASSERT(x)
 #endif
 
 #define KL(s)               ((sizeof(s) - 1) / sizeof(char))

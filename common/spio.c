@@ -441,7 +441,7 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
             {
                 /*
                  * K, basically the logic is that we're discarding
-                 * data ond the data will be screwed up. So overwriting
+                 * data and the data will be screwed up. So overwriting
                  * some valid data in order to flush the line and
                  * keep the buffering simple is a price we pay gladly :)
                  */
@@ -544,7 +544,7 @@ int spio_write_dataf(struct spctx* ctx, spio_t* io, const char* fmt, ...)
     return spio_write_data(ctx, io, buf);
 }
 
-int spio_write_data_raw(spctx_t* ctx, spio_t* io, unsigned char* buf, int len)
+int spio_write_data_raw(spctx_t* ctx, spio_t* io, const unsigned char* buf, int len)
 {
     int r;
 

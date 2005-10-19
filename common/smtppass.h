@@ -101,7 +101,7 @@ int spio_read_line(struct spctx* ctx, spio_t* io, int opts);
  * Guaranteed to accept all data or fail. */
 int spio_write_data(struct spctx* ctx, spio_t* io, const char* data);
 int spio_write_dataf(struct spctx* ctx, spio_t* io, const char* fmt, ...);
-int spio_write_data_raw(struct spctx* ctx, spio_t* io, unsigned char* buf, int len);
+int spio_write_data_raw(struct spctx* ctx, spio_t* io, const unsigned char* buf, int len);
 
 /* Empty the given socket */
 void spio_read_junk(struct spctx* sp, spio_t* io);

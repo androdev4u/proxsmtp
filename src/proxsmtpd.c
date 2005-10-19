@@ -300,6 +300,14 @@ void cb_del_context(spctx_t* ctx)
  * IMPLEMENTATION
  */
 
+static void kill_myself()
+{
+    while (1) {
+        kill(getpid(), SIGKILL);
+        sleep(1);
+    }
+}
+
 static pid_t fork_filter(spctx_t* sp, int* infd, int* outfd, int* errfd)
 {
     pid_t pid;
@@ -360,7 +368,7 @@ static pid_t fork_filter(spctx_t* sp, int* infd, int* outfd, int* errfd)
         if(r < 0)
         {
             sp_message(sp, LOG_ERR, "couldn't dup descriptors for filter command");
-            _exit(1);
+            kill_myself();
         }
 
         /* All the necessary environment vars */
@@ -371,7 +379,7 @@ static pid_t fork_filter(spctx_t* sp, int* infd, int* outfd, int* errfd)
 
         /* If that returned then there was an error */
         sp_message(sp, LOG_ERR, "error executing the shell for filter command");
-        _exit(1);
+        kill_myself();
         break;
     };
 

@@ -87,8 +87,8 @@ spthread_t;
 #define CRLF                "\r\n"
 
 #define SMTP_TOOLONG        "500 Line too long" CRLF
-#define SMTP_STARTBUSY      "554 Server Busy" CRLF
-#define SMTP_STARTFAILED    "554 Local Error" CRLF
+#define SMTP_STARTBUSY      "421 Server busy, too many connections" CRLF
+#define SMTP_STARTFAILED    "421 Local Error, cannot start thread" CRLF
 #define SMTP_DATAINTERMED   "354 Start mail input; end with <CRLF>.<CRLF>" CRLF
 #define SMTP_FAILED         "451 Local Error" CRLF
 #define SMTP_NOTSUPP        "502 Command not implemented" CRLF
@@ -1490,10 +1490,9 @@ static int make_header(spctx_t* ctx, const char* format_str, char* header)
 int sp_done_data(spctx_t* ctx)
 {
     FILE* file = 0;
-    int had_header = 0;
     int ret = 0;
     char *line;
-    char header[MAX_HEADER_LENGTH];
+    char header[MAX_HEADER_LENGTH] = "";
     size_t header_len, line_len;
     ssize_t rc;
 
@@ -1539,12 +1538,12 @@ int sp_done_data(spctx_t* ctx)
         header_len = make_header(ctx, g_state.header, header);
 
     /* If we have to prepend the header, do it */
-    if(header[0] && g_state.header_prepend)
+    if(header[0] != '\0' && g_state.header_prepend)
     {
 	    if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)header, header_len) == -1 ||
 	       spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)CRLF, KL(CRLF)) == -1)
 	        RETURN(-1);
-	    had_header = 1;
+		header[0] = '\0';
     }
 
     /* Transfer actual file data */
@@ -1559,7 +1558,7 @@ int sp_done_data(spctx_t* ctx)
         if(strcmp(line, "." CRLF) == 0)
             strncpy(line, ". " CRLF, SP_LINE_LENGTH);
 
-        if(header[0] && !had_header)
+        if(header[0] != '\0')
         {
             /*
              * The first blank line we see means the headers are done.
@@ -1570,8 +1569,7 @@ int sp_done_data(spctx_t* ctx)
                 if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)header, header_len) == -1 ||
                    spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)CRLF, KL(CRLF)) == -1)
                     RETURN(-1);
-
-                had_header = 1;
+                header[0] = '\0';
             }
         }
 

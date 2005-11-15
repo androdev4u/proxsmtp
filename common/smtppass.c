@@ -1710,13 +1710,12 @@ void sp_setup_forked(spctx_t* ctx, int file)
  */
 
 const char kMsgDelimiter[] = ": ";
-#define MAX_MSGLEN  256
+#define MAX_MSGLEN  1024
 
 static void vmessage(spctx_t* ctx, int level, int err,
                      const char* msg, va_list ap)
 {
-    size_t len;
-    char* m;
+    char buf[MAX_MSGLEN];
     int e = errno;
 
     if(g_state.daemonized)
@@ -1732,35 +1731,30 @@ static void vmessage(spctx_t* ctx, int level, int err,
 
     ASSERT(msg);
 
-    len = strlen(msg) + 20 + MAX_MSGLEN;
-    m = (char*)alloca(len);
+    if(ctx)
+        snprintf(buf, MAX_MSGLEN, "%06X: %s%s", ctx->id, msg, err ? ": " : "");
+    else
+        snprintf(buf, MAX_MSGLEN, "%s%s", msg, err ? ": " : "");
 
-    if(m)
+    if(err)
     {
-        if(ctx)
-            snprintf(m, len, "%06X: %s%s", ctx->id, msg, err ? ": " : "");
-        else
-            snprintf(m, len, "%s%s", msg, err ? ": " : "");
+        /* strerror_r doesn't want to work for us for some reason
+        len = strlen(buf);
+        strerror_r(e, buf + len, MAX_MSGLEN - len); */
 
-        if(err)
-        {
-            /* strerror_r doesn't want to work for us for some reason
-            strerror_r(e, m + strlen(m), MAX_MSGLEN); */
-
-            sp_lock();
-                strncat(m, strerror(e), len);
-            sp_unlock();
-        }
-
-        m[len - 1] = 0;
-        msg = m;
+        sp_lock();
+            strncat(buf, strerror(e), MAX_MSGLEN);
+        sp_unlock();
     }
+
+    /* As a precaution */
+    buf[MAX_MSGLEN - 1] = 0;
 
     /* Either to syslog or stderr */
     if(g_state.daemonized)
-        vsyslog(level, msg, ap);
+        vsyslog(level, buf, ap);
     else
-        vwarnx(msg, ap);
+        vwarnx(buf, ap);
 }
 
 void sp_messagex(spctx_t* ctx, int level, const char* msg, ...)

@@ -282,19 +282,24 @@ unsigned int spio_select(spctx_t* ctx, ...)
 
     while((io = va_arg(ap, spio_t*)) != NULL)
     {
-        /* We can't handle more than 31 args */
-        if(i > (sizeof(int) * 8) - 2)
-            break;
+        if(spio_valid(io))
+        {
+            /* We can't handle more than 31 args */
+            if(i > (sizeof(int) * 8) - 2)
+                break;
 
-        /* We have data on the descriptor, which is an action */
-        io->last_action = time(NULL);
+            /* We have data on the descriptor, which is an action */
+            io->last_action = time(NULL);
 
-        /* Check if the buffer has something in it */
-        if(FD_ISSET(io->fd, &mask))
-            ret |= (1 << i);
+            /* Check if the buffer has something in it */
+            if(FD_ISSET(io->fd, &mask))
+                ret |= (1 << i);
+        }
 
         i++;
     }
+
+    va_end(ap);
 
     return ret;
 }

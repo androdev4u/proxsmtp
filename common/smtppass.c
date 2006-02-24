@@ -578,6 +578,7 @@ static void connection_loop(int sock)
                 close(fd);
             }
 
+            sp_messagex(NULL, LOG_DEBUG, "cleaning up completed thread");
             pthread_join(threads[i].tid, NULL);
             threads[i].tid = 0;
         }

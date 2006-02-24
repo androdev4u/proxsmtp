@@ -44,11 +44,16 @@
 #endif
 
 #include <sys/types.h>
+#include <stdlib.h>
 
 #ifndef HAVE_STDARG_H
 #error ERROR: Must have a working stdarg.h header
 #else
 #include <stdarg.h>
+#endif
+
+#ifdef WITH_DMALLOC
+#include "dmalloc.h"
 #endif
 
 #ifndef HAVE_REALLOCF

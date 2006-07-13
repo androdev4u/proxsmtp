@@ -865,6 +865,7 @@ static int wait_process(spctx_t* sp, pid_t pid, int* status)
 {
     /* We poll x times a second */
     int waits = g_pxstate.timeout.tv_sec * (1000 / POLL_TIME);
+    *status = 0;
 
     while(waits > 0)
     {

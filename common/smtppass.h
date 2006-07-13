@@ -213,7 +213,7 @@ int sp_cache_data(spctx_t* ctx);
  * Sends the data in file buffer off to server. This is
  * completes a successful mail transfer.
  */
-int sp_done_data(spctx_t* ctx);
+int sp_done_data(spctx_t* ctx, const char *header);
 
 /*
  * Fails the data, deletes any temp data, and sends given

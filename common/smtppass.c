@@ -161,7 +161,6 @@ spthread_t;
 #define CFG_TIMEOUT         "TimeOut"
 #define CFG_OUTADDR         "OutAddress"
 #define CFG_LISTENADDR      "Listen"
-#define CFG_HEADER      	"Header"
 #define CFG_TRANSPARENT     "TransparentProxy"
 #define CFG_DIRECTORY       "TempDirectory"
 #define CFG_KEEPALIVES      "KeepAlives"
@@ -1488,13 +1487,14 @@ static int make_header(spctx_t* ctx, const char* format_str, char* header)
     return l >= MAX_HEADER_LENGTH ? MAX_HEADER_LENGTH - 1 : l;
 }
 
-int sp_done_data(spctx_t* ctx)
+int sp_done_data(spctx_t* ctx, const char *headertmpl)
 {
     FILE* file = 0;
     int ret = 0;
     char *line;
     char header[MAX_HEADER_LENGTH] = "";
     size_t header_len, line_len;
+    int header_prepend = 0;
     ssize_t rc;
 
     ASSERT(ctx->cachename[0]);  /* Must still be around */
@@ -1535,16 +1535,21 @@ int sp_done_data(spctx_t* ctx)
 
     sp_messagex(ctx, LOG_DEBUG, "sending from cache file: %s", ctx->cachename);
 
-    if(g_state.header)
-        header_len = make_header(ctx, g_state.header, header);
+    if(headertmpl)
+    {
+        header_len = make_header(ctx, headertmpl, header);
+        if(is_first_word(RCVD_HEADER, header, KL(RCVD_HEADER)))
+            header_prepend = 1;
+    }
+
 
     /* If we have to prepend the header, do it */
-    if(header[0] != '\0' && g_state.header_prepend)
+    if(header[0] != '\0' && header_prepend)
     {
-	    if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)header, header_len) == -1 ||
-	       spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)CRLF, KL(CRLF)) == -1)
-	        RETURN(-1);
-		header[0] = '\0';
+        if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)header, header_len) == -1 ||
+           spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)CRLF, KL(CRLF)) == -1)
+            RETURN(-1);
+        header[0] = '\0';
     }
 
     /* Transfer actual file data */
@@ -1916,16 +1921,6 @@ int sp_parse_option(const char* name, const char* value)
         else
             g_state.pidfile = value;
         ret = 1;
-    }
-
-    else if(strcasecmp(CFG_HEADER, name) == 0)
-    {
-        g_state.header = trim_start(value);
-	    if(strlen(g_state.header) == 0)
-	        g_state.header = NULL;
-	    else if(is_first_word(RCVD_HEADER, g_state.header, KL(RCVD_HEADER)))
-	        g_state.header_prepend = 1;
-	    ret = 1;
     }
 
     /* Always pass through to program */

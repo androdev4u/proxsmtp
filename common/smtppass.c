@@ -551,7 +551,7 @@ static void connection_loop(int sock)
         /* Check to make sure we have a thread */
         if(fd != -1)
         {
-            sp_messagex(NULL, LOG_ERR, "too many connections open (max %d). sent 554 response", g_state.max_threads);
+            sp_messagex(NULL, LOG_ERR, "too many connections open (max %d). sent busy response", g_state.max_threads);
             write(fd, SMTP_STARTBUSY, KL(SMTP_STARTBUSY));
             shutdown(fd, SHUT_RDWR);
             close(fd);

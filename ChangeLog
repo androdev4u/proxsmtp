@@ -1,6 +1,7 @@
 1.4 [???]
   - Fix crasher after connection closes unexpectedly.
   - Fix problem with waiting for processes [Jeff Fisher]
+  - Better message for 'busy' [Akihiro Sagawa]
 
 1.3 [2005-10-21]
   - Handle condition of server refusing data transfers more gracefully.

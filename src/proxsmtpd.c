@@ -221,7 +221,7 @@ int cb_check_data(spctx_t* ctx)
         sp_messagex(ctx, LOG_WARNING, "no filter command specified. passing message through");
 
         if(sp_cache_data(ctx) == -1 ||
-           sp_done_data(ctx) == -1)
+           sp_done_data(ctx, NULL) == -1)
             return -1;  /* Message already printed */
 
         return 0;
@@ -520,7 +520,7 @@ static int process_file_command(spctx_t* sp)
     /* A successful response */
     if(WEXITSTATUS(status) == 0)
     {
-        if(sp_done_data(sp) == -1)
+        if(sp_done_data(sp, NULL) == -1)
             RETURN(-1); /* message already printed */
 
         sp_add_log(sp, "status=", "FILTERED");
@@ -764,7 +764,7 @@ static int process_pipe_command(spctx_t* sp)
     /* A successful response */
     if(WEXITSTATUS(status) == 0)
     {
-        if(sp_done_data(sp) == -1)
+        if(sp_done_data(sp, NULL) == -1)
             RETURN(-1); /* message already printed */
 
         sp_add_log(sp, "status=", "FILTERED");

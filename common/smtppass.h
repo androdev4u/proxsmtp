@@ -129,8 +129,9 @@ typedef struct spctx
     char cachename[MAXPATHLEN];     /* The name of the file that we cache into */
     char logline[SP_LOG_LINE_LEN];  /* Log line */
 
-    char* sender;             /* The email of the sender */
-    char* recipients;         /* The email of the recipients */
+    char* sender;                   /* The email of the sender */
+    char* recipients;               /* The email of the recipients */
+    char* xforwardaddr;             /* The IP address proxied for */
 
     int _crlf;                      /* Private data */
 }

@@ -123,6 +123,7 @@ spthread_t;
 #define STARTTLS_CMD        "STARTTLS"
 #define BDAT_CMD            "BDAT"
 #define XCLIENT_CMD         "XCLIENT"
+#define XFORWARD_CMD        "XFORWARD"
 
 #define DATA_END_SIG        "." CRLF
 
@@ -201,6 +202,7 @@ static int make_connections(spctx_t* ctx, int client);
 static int read_server_response(spctx_t* ctx);
 static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
+static char* parse_xforward(char* line, const char* part);
 static const char* get_successful_rsp(const char* line, int* cont);
 static void do_server_noop(spctx_t* ctx);
 
@@ -648,6 +650,12 @@ static void cleanup_context(spctx_t* ctx)
         ctx->sender = NULL;
     }
 
+    if(ctx->xforwardaddr)
+    {
+        free(ctx->xforwardaddr);
+        ctx->xforwardaddr = NULL;
+    }
+
     ctx->logline[0] = 0;
 }
 
@@ -883,7 +891,7 @@ static int smtp_passthru(spctx_t* ctx)
                     RETURN(-1);
 
                 /*
-                 * Now go into avcheck mode. This also handles the eventual
+                 * Now go into scan mode. This also handles the eventual
                  * sending of the data to the server, making the av check
                  * transparent
                  */
@@ -1069,7 +1077,7 @@ static int smtp_passthru(spctx_t* ctx)
                     }
                 }
 
-                /* MAIL FROM */
+                /* MAIL FROM (that the server accepted) */
                 if((r = check_first_word(C_LINE, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS)) > 0)
                 {
                     t = parse_address(C_LINE + r);
@@ -1081,7 +1089,7 @@ static int smtp_passthru(spctx_t* ctx)
                         strcpy(ctx->sender, t);
                 }
 
-                /* RCPT TO */
+                /* RCPT TO (that the server accepted) */
                 else if((r = check_first_word(C_LINE, TO_CMD, KL(TO_CMD), SMTP_DELIMS)) > 0)
                 {
                     t = parse_address(C_LINE + r);
@@ -1099,6 +1107,21 @@ static int smtp_passthru(spctx_t* ctx)
                             ctx->recipients[0] = 0;
 
                         strcat(ctx->recipients, t);
+                    }
+                }
+
+                /*
+                 * If the client sends an XFORWARD, and the server accepted it,
+                 * we store address for use in our forked process environment
+                 * variables (see sp_setup_forked).
+                 */
+                else if(is_first_word(C_LINE, XFORWARD_CMD, KL(XFORWARD_CMD)))
+                {
+                    if((t = parse_xforward (C_LINE + KL(XFORWARD_CMD), "ADDR")))
+                    {
+                        ctx->xforwardaddr = (char*)reallocf(ctx->xforwardaddr, strlen(t) + 1);
+                        if(ctx->xforwardaddr)
+                            strcpy(ctx->xforwardaddr, t);
                     }
                 }
 
@@ -1152,6 +1175,40 @@ static char* parse_address(char* line)
     }
 
     return trim_end(line);
+}
+
+static char* parse_xforward(char* line, const char* part)
+{
+    char* t;
+    char* e;
+
+    t = strcasestr(line, part);
+    if(!t)
+        return NULL;
+
+    /* equals sign and surrounding */
+    t = trim_start(t + strlen(part));
+    if(*t != '=')
+        return NULL;
+    t = trim_start(t + 1);
+    if(!*t)
+        return NULL;
+
+    /* Find the end of the thingy */
+    if(*t == '[')
+    {
+        t++;
+        e = strchr(t, ']');
+    }
+    else
+    {
+        e = t + strcspn(t, " \t");
+    }
+
+    if(!e)
+        return NULL;
+    *e = 0;
+    return t;
 }
 
 static const char* get_successful_rsp(const char* line, int* cont)
@@ -1703,6 +1760,9 @@ void sp_setup_forked(spctx_t* ctx, int file)
 
     if(spio_valid(&(ctx->client)))
         setenv("CLIENT", ctx->client.peername, 1);
+
+    if(ctx->xforwardaddr)
+        setenv("REMOTE", ctx->xforwardaddr, 1);
 
     if(spio_valid(&(ctx->server)))
         setenv("SERVER", ctx->server.peername, 1);

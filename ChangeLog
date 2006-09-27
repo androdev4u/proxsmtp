@@ -1,6 +1,8 @@
 1.5 [2006-09-05]
   - Added support for setting the REMOTE variable when an XFORWARD
     command is seen.
+  - On FreeBSD fix problem where stderr wasn't processed when filter
+    didn't read stdin.
 
 1.4 [2006-08-10]
   - Fix crasher after connection closes unexpectedly.

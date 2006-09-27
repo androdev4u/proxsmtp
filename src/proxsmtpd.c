@@ -648,7 +648,7 @@ static int process_pipe_command(spctx_t* sp)
                 {
                     if(errno == EPIPE)
                     {
-                        sp_messagex(sp, LOG_WARNING, "filter command closed input early");
+                        sp_messagex(sp, LOG_INFO, "filter command closed input early");
 
                         /* Eat up the rest of the data */
                         while(sp_read_data(sp, &ibuf) > 0)
@@ -656,7 +656,6 @@ static int process_pipe_command(spctx_t* sp)
 
                         close(infd);
                         infd = -1;
-                        break;
                     }
                     else if(errno != EAGAIN && errno != EINTR)
                     {

@@ -1,6 +1,7 @@
 1.6 [???]
   - On FreeBSD fix problem where stderr wasn't processed when filter
     didn't read stdin.
+  - Add strcasestr which is missing on Solaris.
 
 1.5 [2006-09-05]
   - Added support for setting the REMOTE variable when an XFORWARD

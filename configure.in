@@ -36,8 +36,8 @@ dnl  Nate Nielsen <nielsen@memberwebs.com>
 dnl
 
 dnl Process this file with autoconf to produce a configure script.
-AC_INIT(proxsmtp, 1.5.90, nielsen@memberwebs.com)
-AM_INIT_AUTOMAKE(proxsmtp, 1.5.90)
+AC_INIT(proxsmtp, 1.5.91, nielsen@memberwebs.com)
+AM_INIT_AUTOMAKE(proxsmtp, 1.5.91)
 
 LDFLAGS="$LDFLAGS -L/usr/local/lib"
 CFLAGS="$CFLAGS -I/usr/local/include"
@@ -106,7 +106,7 @@ AC_CHECK_GLOBAL(__argv)
 # Required Functions
 AC_CHECK_FUNCS([memset strerror malloc realloc getopt strchr tolower getaddrinfo usleep], ,
 	       [echo "ERROR: Required function missing"; exit 1])
-AC_CHECK_FUNCS([strlwr strlcat strlcpy strncat strncpy setenv daemon])
+AC_CHECK_FUNCS([strlwr strlcat strlcpy strncat strncpy strcasestr setenv daemon])
 AC_CHECK_FUNCS([getline getdelim])
 
 # Have to resolve this for the path below

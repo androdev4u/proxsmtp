@@ -1,4 +1,4 @@
-1.6 [???]
+1.6 [2006-11-13]
   - On FreeBSD fix problem where stderr wasn't processed when filter
     didn't read stdin.
   - Add strcasestr which is missing on Solaris.

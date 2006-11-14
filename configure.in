@@ -36,8 +36,8 @@ dnl  Nate Nielsen <nielsen@memberwebs.com>
 dnl
 
 dnl Process this file with autoconf to produce a configure script.
-AC_INIT(proxsmtp, 1.5.91, nielsen@memberwebs.com)
-AM_INIT_AUTOMAKE(proxsmtp, 1.5.91)
+AC_INIT(proxsmtp, 1.6, nielsen@memberwebs.com)
+AM_INIT_AUTOMAKE(proxsmtp, 1.6)
 
 LDFLAGS="$LDFLAGS -L/usr/local/lib"
 CFLAGS="$CFLAGS -I/usr/local/include"

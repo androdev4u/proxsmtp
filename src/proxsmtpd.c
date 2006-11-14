@@ -65,6 +65,7 @@ typedef struct pxstate
     struct timeval timeout;         /* The command timeout */
     int pipe_cmd;                   /* Whether command is a pipe or not */
     const char* directory;          /* The directory for temp files */
+    const char* header;             /* Header to include in output */
 }
 pxstate_t;
 
@@ -82,6 +83,7 @@ pxstate_t;
 #define CFG_DIRECTORY       "TempDirectory"
 #define CFG_DEBUGFILES      "DebugFiles"
 #define CFG_CMDTIMEOUT      "FilterTimeout"
+#define CFG_HEADER      	"Header"
 
 #define TYPE_PIPE           "pipe"
 #define TYPE_FILE           "file"
@@ -221,7 +223,7 @@ int cb_check_data(spctx_t* ctx)
         sp_messagex(ctx, LOG_WARNING, "no filter command specified. passing message through");
 
         if(sp_cache_data(ctx) == -1 ||
-           sp_done_data(ctx, NULL) == -1)
+           sp_done_data(ctx, g_pxstate.header) == -1)
             return -1;  /* Message already printed */
 
         return 0;
@@ -277,6 +279,14 @@ int cb_parse_option(const char* name, const char* value)
             g_pxstate.pipe_cmd = 0;
         else
             errx(2, "invalid value for " CFG_FILTERTYPE " (must specify 'pipe' or 'file')");
+        return 1;
+    }
+
+    else if(strcasecmp(CFG_HEADER, name) == 0)
+    {
+        g_pxstate.header = trim_start(value);
+        if(strlen(g_pxstate.header) == 0)
+            g_pxstate.header = NULL;
         return 1;
     }
 
@@ -520,7 +530,7 @@ static int process_file_command(spctx_t* sp)
     /* A successful response */
     if(WEXITSTATUS(status) == 0)
     {
-        if(sp_done_data(sp, NULL) == -1)
+        if(sp_done_data(sp, g_pxstate.header) == -1)
             RETURN(-1); /* message already printed */
 
         sp_add_log(sp, "status=", "FILTERED");
@@ -763,7 +773,7 @@ static int process_pipe_command(spctx_t* sp)
     /* A successful response */
     if(WEXITSTATUS(status) == 0)
     {
-        if(sp_done_data(sp, NULL) == -1)
+        if(sp_done_data(sp, g_pxstate.header) == -1)
             RETURN(-1); /* message already printed */
 
         sp_add_log(sp, "status=", "FILTERED");

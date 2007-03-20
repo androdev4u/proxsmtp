@@ -767,30 +767,38 @@ static int make_connections(spctx_t* ctx, int client)
         outaddr = &addr;
     }
 
-    /* No transparent proxy but check for loopback option */
+    /* Check for loopback option */
+    else if(SANY_TYPE(*outaddr) == AF_INET &&
+            outaddr->s.in.sin_addr.s_addr == 0)
+    {
+        /* Use the incoming IP as the default */
+        memcpy(&addr, &(g_state.outaddr), sizeof(addr));
+        memcpy(&(addr.s.in.sin_addr), &(peeraddr.s.in.sin_addr), sizeof(addr.s.in.sin_addr));
+        outaddr = &addr;
+    }
+#ifdef HAVE_INET6
+    /* IPv6 loopback? */
+    else if(SANY_TYPE(*outaddr) == AF_INET6 &&
+            outaddr->s.in.in6.sin_addr.s_addr == 0)
+    {
+        /* Use the incoming IP as the default */
+        memcpy(&addr, &(g_state.outaddr), sizeof(addr));
+        memcpy(&(addr.s.in.sin6_addr), &(peeraddr.s.in.sin6_addr), sizeof(addr.s.in.sin6_addr));
+        outaddr = &addr;
+    }
+#endif
+
+    /* Not transparent proxy or loopback */
     else
     {
-        if(SANY_TYPE(*outaddr) == AF_INET &&
-           outaddr->s.in.sin_addr.s_addr == 0)
-        {
-            /* Use the incoming IP as the default */
-            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
-            memcpy(&(addr.s.in.sin_addr), &(peeraddr.s.in.sin_addr), sizeof(addr.s.in.sin_addr));
-            outaddr = &addr;
-        }
-#ifdef HAVE_INET6
-        else if(SANY_TYPE(*outaddr) == AF_INET6 &&
-                outaddr->s.in.in6.sin_addr.s_addr == 0)
-        {
-            /* Use the incoming IP as the default */
-            memcpy(&addr, &(g_state.outaddr), sizeof(addr));
-            memcpy(&(addr.s.in.sin6_addr), &(peeraddr.s.in.sin6_addr), sizeof(addr.s.in.sin6_addr));
-            outaddr = &addr;
-        }
-#endif
+        /* Resolve any DNS name again */
+        if(sock_any_pton(g_state.outname, &addr, SANY_OPT_DEFPORT(25)) != -1)
+            memcpy(&(g_state.outaddr), &addr, sizeof(g_state.outaddr));
+        else
+            sp_messagex(ctx, LOG_WARNING, "couldn't resolve " CFG_OUTADDR ": %s", g_state.outname);
     }
 
-    /* Reparse name if possible */
+    /* Reparse name if needed */
     if(outaddr != &(g_state.outaddr))
     {
         if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)

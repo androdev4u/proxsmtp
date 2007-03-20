@@ -177,7 +177,7 @@ int main(int argc, char* argv[])
 
         /* Print version number */
         case 'v':
-            printf("clamsmtpd (version %s)\n", VERSION);
+            printf("proxsmtpd (version %s)\n", VERSION);
             printf("          (config: %s)\n", DEFAULT_CONFIG);
             exit(0);
             break;

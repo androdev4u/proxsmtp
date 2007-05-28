@@ -1,3 +1,7 @@
+1.7 [2007-05-28]
+ - Use my real name 'Stef Walter'
+   See: http://memberwebs.com/nielsen/
+
 1.6 [2006-11-13]
   - On FreeBSD fix problem where stderr wasn't processed when filter
     didn't read stdin.

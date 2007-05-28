@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004, Nate Nielsen
+ * Copyright (c) 2004, Stefan Walter
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,7 +32,7 @@
  *
  *
  * CONTRIBUTORS
- *  Nate Nielsen <nielsen@memberwebs.com>
+ *  Stefan Walter <stef@memberwebs.com>
  *  Andreas Steinmetz <ast@domdv.de>
  *  Rubio Vaughan <rubio@passim.net>
  *  Olivier Beyssac <ob@r14.freenix.org>

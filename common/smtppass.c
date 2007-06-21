@@ -98,6 +98,7 @@ spthread_t;
 
 #define SMTP_DATA           "DATA" CRLF
 #define SMTP_NOOP           "NOOP" CRLF
+#define SMTP_RSET           "RSET" CRLF
 #define SMTP_XCLIENT        "XCLIENT ADDR=%s" CRLF
 #define SMTP_BANNER         "220 smtp.passthru" CRLF
 #define SMTP_HELO_RSP       "250 smtp.passthru" CRLF
@@ -1710,6 +1711,11 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 
     if(spio_write_data(ctx, &(ctx->client), smtp_status) == -1)
         return -1;
+
+     /* Tell the server to forget about the current message */
+     if(spio_write_data(ctx, &(ctx->server), SMTP_RSET) == -1 ||
+        read_server_response(ctx) == -1)
+         return -1;
 
     return 0;
 }

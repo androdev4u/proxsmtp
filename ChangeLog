@@ -1,3 +1,6 @@
+1.8
+ - Send an RSET to the server after filter fails an email.
+
 1.7 [2007-05-28]
  - Use my real name 'Stef Walter'
    See: http://memberwebs.com/nielsen/

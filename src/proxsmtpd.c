@@ -437,7 +437,7 @@ cleanup:
 
 static int process_file_command(spctx_t* sp)
 {
-    pid_t pid;
+    pid_t pid = 0;
     int ret = 0, status, r;
     struct timeval timeout;
 

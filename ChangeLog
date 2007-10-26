@@ -1,5 +1,6 @@
 1.8
  - Send an RSET to the server after filter fails an email.
+ - Fix an uninitialized pid variable.
 
 1.7 [2007-05-28]
  - Use my real name 'Stef Walter'

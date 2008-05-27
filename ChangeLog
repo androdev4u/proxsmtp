@@ -1,4 +1,5 @@
 1.8
+ - Make the XFOWARD HELO available as a environment variable in scripts. [Glenn Matthys]
  - Send an RSET to the server after filter fails an email.
  - Fix an uninitialized pid variable.
 

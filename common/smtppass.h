@@ -132,6 +132,7 @@ typedef struct spctx
     char* sender;                   /* The email of the sender */
     char* recipients;               /* The email of the recipients */
     char* xforwardaddr;             /* The IP address proxied for */
+    char* xforwardhelo;             /* The HELO/EHLO proxied for */
 
     int _crlf;                      /* Private data */
 }

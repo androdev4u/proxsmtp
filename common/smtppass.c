@@ -657,6 +657,12 @@ static void cleanup_context(spctx_t* ctx)
         ctx->xforwardaddr = NULL;
     }
 
+    if(ctx->xforwardhelo)
+    {
+    	free(ctx->xforwardhelo);
+    	ctx->xforwardhelo = NULL;
+    }
+
     ctx->logline[0] = 0;
 }
 
@@ -1132,6 +1138,14 @@ static int smtp_passthru(spctx_t* ctx)
                         if(ctx->xforwardaddr)
                             strcpy(ctx->xforwardaddr, t);
                     }
+
+                    if((t = parse_xforward (C_LINE + KL(XFORWARD_CMD), "HELO")))
+                    {
+                        ctx->xforwardhelo = (char*)reallocf(ctx->xforwardhelo, strlen(t) + 1);
+                        if(ctx->xforwardhelo)
+                            strcpy(ctx->xforwardhelo, t);
+                    }
+
                 }
 
                 /* RSET */
@@ -1777,6 +1791,9 @@ void sp_setup_forked(spctx_t* ctx, int file)
 
     if(ctx->xforwardaddr)
         setenv("REMOTE", ctx->xforwardaddr, 1);
+
+    if(ctx->xforwardhelo)
+        setenv("REMOTE_HELO", ctx->xforwardhelo, 1);
 
     if(spio_valid(&(ctx->server)))
         setenv("SERVER", ctx->server.peername, 1);

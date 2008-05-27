@@ -138,6 +138,14 @@ IP address of the original client. In order for this information to be present
 (a) the SMTP client (sending server) must an send an XFORWARD command and (b) 
 the SMTP server (receiving server) must accept that XFORWARD command without 
 error.
+.It Ar REMOTE_HELO
+If 
+.Nm
+is being used to filter email between SMTP servers, then this is the 
+HELO/EHLO banner of the original client. In order for this information to be present 
+(a) the SMTP client (sending server) must an send an XFORWARD command and (b) 
+the SMTP server (receiving server) must accept that XFORWARD command without 
+error.
 .It Ar SENDER
 The email address for the sender of the email. 
 .It Ar SERVER

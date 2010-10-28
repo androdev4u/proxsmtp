@@ -5,7 +5,9 @@ Makefile.in
 .project
 .cproject
 .settings
+*~
 
+/test
 /install-sh
 /configure
 /config.sub

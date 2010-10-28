@@ -75,14 +75,17 @@ AC_CHECK_HEADERS([unistd.h stdio.h stddef.h fcntl.h stdlib.h assert.h errno.h st
 	[echo "ERROR: Required C header missing"; exit 1])
 
 # Check for linux type transparent proxy support
-AC_CHECK_HEADERS([linux/netfilter_ipv4.h],
-  	AC_DEFINE(LINUX_TRANSPARENT_PROXY, 1, [Whether the system supports a linux type transparent proxy]),
-   ,
-   [[
-   #ifdef HAVE_LIMITS_H
-   #include <limits.h>
-   #endif
-   ]] )
+AC_CHECK_HEADERS([linux/types.h linux/netfilter_ipv4.h],
+	AC_DEFINE(LINUX_NETFILTER, 1, [Whether the system supports a linux type transparent proxy]),
+	,
+	[[
+	#ifdef HAVE_LIMITS_H
+	#include <limits.h>
+	#endif
+	#include <sys/socket.h>
+	#include <netinet/in.h>
+	]]
+)
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST

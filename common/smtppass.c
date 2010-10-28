@@ -45,6 +45,9 @@
 #include <sys/socket.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+
+#include <netinet/in.h>
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -60,7 +63,8 @@
 
 #include "usuals.h"
 
-#ifdef LINUX_TRANSPARENT_PROXY
+#if LINUX_NETFILTER
+#include <linux/types.h>
 #include <linux/netfilter_ipv4.h>
 #endif
 
@@ -754,7 +758,7 @@ static int make_connections(spctx_t* ctx, int client)
         memset(&addr, 0, sizeof(addr));
         SANY_LEN(addr) = sizeof(addr);
 
-#ifdef LINUX_TRANSPARENT_PROXY
+#ifdef LINUX_NETFILTER
         if(getsockopt(ctx->client.fd, SOL_IP, SO_ORIGINAL_DST, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
 #else
         if(getsockname(ctx->client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)

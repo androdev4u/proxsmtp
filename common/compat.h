@@ -39,9 +39,7 @@
 #ifndef _COMPAT_H_
 #define _COMPAT_H_
 
-#ifdef HAVE_CONFIG_H
 #include "config.h"
-#endif
 
 #include <sys/types.h>
 #include <stdlib.h>

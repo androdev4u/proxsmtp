@@ -86,7 +86,8 @@ void spio_init(spio_t* io, const char* name);
 void spio_attach(struct spctx* ctx, spio_t* io, int fd, struct sockaddr_any* peer);
 
 /* Connect and disconnect from sockets */
-int  spio_connect(struct spctx* ctx, spio_t* io, const struct sockaddr_any* sany, const char* addrname);
+int  spio_connect(struct spctx* ctx, spio_t* io, const struct sockaddr_any* sdst,
+                  const char* dstname, const struct sockaddr_any* ssrc, const char* srcname);
 void spio_disconnect(struct spctx* ctx, spio_t* io);
 
 #define SPIO_TRIM           0x00000001

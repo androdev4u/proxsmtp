@@ -150,45 +150,68 @@ void spio_attach(spctx_t* ctx, spio_t* io, int fd, struct sockaddr_any* peer)
     io->_ln = 0;
 }
 
-int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sany,
-                 const char* addrname)
+int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sdst,
+                 const char* dstname, const struct sockaddr_any* ssrc, const char *srcname)
 {
-    int ret = 0;
-    int fd;
+	int ret = 0;
+	int fd;
 
-    ASSERT(ctx && io && sany && addrname);
-    ASSERT(io->fd == -1);
+	ASSERT(ctx && io && sdst && dstname);
+	ASSERT(io->fd == -1);
 
-    if((fd = socket(SANY_TYPE(*sany), SOCK_STREAM, 0)) == -1)
-        RETURN(-1);
+	if((fd = socket(SANY_TYPE(*sdst), SOCK_STREAM, 0)) == -1)
+		RETURN(-1);
 
-    if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1 ||
-       setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1)
-        sp_messagex(ctx, LOG_DEBUG, "%s: couldn't set timeouts on connection", GET_IO_NAME(io));
+	if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1 ||
+	   setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &(g_state.timeout), sizeof(g_state.timeout)) == -1)
+		sp_messagex(ctx, LOG_DEBUG, "%s: couldn't set timeouts on connection", GET_IO_NAME(io));
 
-    fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
+	fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
 
-    if(connect(fd, &SANY_ADDR(*sany), SANY_LEN(*sany)) == -1)
-	{
-		close_raw(&fd);
-        RETURN(-1);
+	if (ssrc != NULL) {
+#ifdef LINUX_NETFILTER
+		int value = 1;
+		if(setsockopt(fd, SOL_IP, IP_TRANSPARENT, &value, sizeof(value)) < 0) {
+			sp_message(ctx, LOG_DEBUG, "%s: couldn't set transparent mode on connection",
+			           GET_IO_NAME(io));
+			ssrc = NULL;
+		}
+#else
+		/* Can't set source address on other OS */
+		ssrc = NULL;
+#endif
 	}
 
-    spio_attach(ctx, io, fd, NULL);
+	if (ssrc != NULL) {
+		if(bind(fd, &SANY_ADDR(*ssrc), SANY_LEN(*ssrc)) < 0)
+			sp_message(ctx, LOG_WARNING, "%s: couldn't set source of transparent connection to: %s",
+			           GET_IO_NAME(io), srcname);
+		else
+			sp_messagex(ctx, LOG_DEBUG, "%s: setup source of transparent connection: %s",
+			            GET_IO_NAME(io), srcname);
+	}
+
+	if(connect(fd, &SANY_ADDR(*sdst), SANY_LEN(*sdst)) == -1)
+	{
+		close_raw(&fd);
+		RETURN(-1);
+	}
+
+	spio_attach(ctx, io, fd, NULL);
 
 cleanup:
-    if(ret < 0)
-    {
-        if(spio_valid(io))
-            close_raw(&(io->fd));
+	if(ret < 0)
+	{
+		if(spio_valid(io))
+			close_raw(&(io->fd));
 
-        sp_message(ctx, LOG_ERR, "%s: couldn't connect to: %s", GET_IO_NAME(io), addrname);
-        return -1;
-    }
+		sp_message(ctx, LOG_ERR, "%s: couldn't connect to: %s", GET_IO_NAME(io), dstname);
+		return -1;
+	}
 
-    ASSERT(io->fd != -1);
-    sp_messagex(ctx, LOG_DEBUG, "%s connected to: %s", GET_IO_NAME(io), io->peername);
-    return 0;
+	ASSERT(io->fd != -1);
+	sp_messagex(ctx, LOG_DEBUG, "%s connected to: %s", GET_IO_NAME(io), io->peername);
+	return 0;
 }
 
 void spio_disconnect(spctx_t* ctx, spio_t* io)

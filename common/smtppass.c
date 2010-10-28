@@ -738,9 +738,11 @@ static int make_connections(spctx_t* ctx, int client)
 {
     struct sockaddr_any peeraddr;
     struct sockaddr_any addr;
-    struct sockaddr_any* outaddr;
+    struct sockaddr_any* dstaddr;
+    struct sockaddr_any* srcaddr;
     char buf[MAXPATHLEN];
-    const char* outname;
+    const char* dstname;
+    const char* srcname;
 
     ASSERT(client != -1);
 
@@ -749,8 +751,10 @@ static int make_connections(spctx_t* ctx, int client)
     sp_messagex(ctx, LOG_INFO, "accepted connection from: %s", ctx->client.peername);
 
     /* Create the server connection address */
-    outaddr = &(g_state.outaddr);
-    outname = g_state.outname;
+    dstaddr = &(g_state.outaddr);
+    dstname = g_state.outname;
+    srcaddr = NULL;
+    srcname = NULL;
 
     /* For transparent proxying we have to discover the address to connect to */
     if(g_state.transparent)
@@ -775,18 +779,23 @@ static int make_connections(spctx_t* ctx, int client)
             return -1;
         }
 
-        outaddr = &addr;
+        dstaddr = &addr;
+#ifdef LINUX_NETFILTER
+        srcaddr = &peeraddr;
+        srcname = ctx->client.peername;
+#endif
     }
 
     /* Check for loopback option */
-    else if(SANY_TYPE(*outaddr) == AF_INET &&
-            outaddr->s.in.sin_addr.s_addr == 0)
+    else if(SANY_TYPE(*dstaddr) == AF_INET &&
+            dstaddr->s.in.sin_addr.s_addr == 0)
     {
         /* Use the incoming IP as the default */
         memcpy(&addr, &(g_state.outaddr), sizeof(addr));
         memcpy(&(addr.s.in.sin_addr), &(peeraddr.s.in.sin_addr), sizeof(addr.s.in.sin_addr));
-        outaddr = &addr;
+        dstaddr = &addr;
     }
+
 #ifdef HAVE_INET6
     /* IPv6 loopback? */
     else if(SANY_TYPE(*outaddr) == AF_INET6 &&
@@ -810,16 +819,16 @@ static int make_connections(spctx_t* ctx, int client)
     }
 
     /* Reparse name if needed */
-    if(outaddr != &(g_state.outaddr))
+    if(dstaddr != &(g_state.outaddr))
     {
-        if(sock_any_ntop(outaddr, buf, MAXPATHLEN, 0) != -1)
-            outname = buf;
+        if(sock_any_ntop(dstaddr, buf, MAXPATHLEN, 0) != -1)
+            dstname = buf;
         else
-            outname = "unknown";
+            dstname = "unknown";
     }
 
     /* Connect to the server */
-    if(spio_connect(ctx, &(ctx->server), outaddr, outname) == -1)
+    if(spio_connect(ctx, &(ctx->server), dstaddr, dstname, srcaddr, srcname) == -1)
         return -1;
 
     return 0;

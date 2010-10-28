@@ -57,7 +57,7 @@ struct sockaddr_any
     struct sockaddr_in6 in6;
 #endif
   } s;
-  size_t namelen;
+  socklen_t namelen;
 };
 
 #define SANY_ADDR(any)  ((any).s.a)

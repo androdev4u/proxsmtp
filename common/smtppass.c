@@ -727,7 +727,7 @@ cleanup:
         thread->fd = -1;
     sp_unlock();
 
-    return (void*)(ret == 0 ? 0 : 1);
+    return (void*)(ret == 0 ? (size_t)0 : (size_t)1);
 }
 
 static int make_connections(spctx_t* ctx, int client)

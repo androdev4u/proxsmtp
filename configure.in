@@ -108,6 +108,13 @@ AC_CHECK_FUNCS([memset strerror malloc realloc getopt strchr tolower getaddrinfo
 AC_CHECK_FUNCS([strlwr strlcat strlcpy strncat strncpy strcasestr setenv daemon])
 AC_CHECK_FUNCS([getline getdelim])
 
+# libcap2
+AC_CHECK_LIB([cap], [cap_get_proc], have_libcap="yes", have_libcap="no")
+if test $have_libcap = yes; then
+	AC_DEFINE(HAVE_LIBCAP, 1, [Have libcap2 package, libcap library])
+	LIBS="$LIBS -lcap"
+fi
+
 # Have to resolve this for the path below
 if test "${prefix}" = "NONE"; then
 	prefix=$ac_default_prefix

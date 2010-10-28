@@ -68,6 +68,11 @@
 #include <linux/netfilter_ipv4.h>
 #endif
 
+#ifdef HAVE_LIBCAP
+#include <sys/capability.h>
+#include <sys/prctl.h>
+#endif
+
 #include "compat.h"
 #include "sock_any.h"
 #include "stringx.h"
@@ -388,40 +393,71 @@ static void on_quit(int signal)
 
 static void drop_privileges()
 {
-    char* t;
-    struct passwd* pw;
-    uid_t uid;
+	char* t;
+	struct passwd* pw;
+	uid_t uid;
+#ifdef HAVE_LIBCAP
+	cap_t caps;
+	cap_value_t value;
+#endif
 
-    if(g_state.user)
-    {
-        if(geteuid() != 0)
-        {
-            sp_messagex(NULL, LOG_WARNING, "must be started as root to switch to user: %s", g_state.user);
-            return;
-        }
+	if(g_state.user)
+	{
+		if(geteuid() != 0)
+		{
+			sp_messagex(NULL, LOG_WARNING, "must be started as root to switch to user: %s",
+			            g_state.user);
+			return;
+		}
 
-        uid = strtol(g_state.user, &t, 10);
-        if(!t[0]) /* successful parse */
-            pw = getpwuid(uid);
-        else  /* must be a name */
-            pw = getpwnam(g_state.user);
+#ifdef HAVE_LIBCAP
+		/*
+		 * Tell kernel not clear capabilities when dropping root.
+		 * We drop them manually below, while keeping a small set.
+		 */
+		if(prctl(PR_SET_KEEPCAPS, 1) < 0)
+			sp_message (NULL, LOG_WARNING, "couldn't keep capabilities when dropping privileges");
+#endif
 
-        if(pw == NULL)
-            errx(1, "couldn't look up user: %s", g_state.user);
+		uid = strtol(g_state.user, &t, 10);
+		if(!t[0]) /* successful parse */
+			pw = getpwuid(uid);
+		else  /* must be a name */
+			pw = getpwnam(g_state.user);
 
-        if(setgid(pw->pw_gid) == -1 ||
-           setuid(pw->pw_uid) == -1)
-            err(1, "unable to switch to user: %s (uid %d, gid %d)", g_state.user, pw->pw_uid, pw->pw_gid);
+		if(pw == NULL)
+			errx(1, "couldn't look up user: %s", g_state.user);
 
-        /* A paranoia check */
-        if(setreuid(-1, 0) == 0)
-            err(1, "unable to completely drop privileges");
+		if(setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) == -1 ||
+		   setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid) == -1)
+			err(1, "unable to switch to user: %s (uid %d, gid %d)",
+			    g_state.user, pw->pw_uid, pw->pw_gid);
 
-        sp_messagex(NULL, LOG_DEBUG, "switched to user %s (uid %d, gid %d)", g_state.user, pw->pw_uid, pw->pw_gid);
-    }
+#ifdef HAVE_LIBCAP
+		/*
+		 * No capabilities have been dropped yet. So we drop them here
+		 * keeping only those we need for our proxying.
+		 */
+		caps = cap_init();
+		if (caps == NULL)
+			err(1, "unable to init capabilities");
+		value = CAP_NET_ADMIN;
+		if (cap_set_flag(caps, CAP_EFFECTIVE, 1, &value, CAP_SET) < 0 ||
+		    cap_set_flag(caps, CAP_PERMITTED, 1, &value, CAP_SET) < 0 ||
+		    cap_set_proc(caps) < 0)
+			err(1, "couldn't set capabilities when switching user");
+		cap_free (caps);
+#endif
 
-    if(geteuid() == 0)
-        sp_messagex(NULL, LOG_WARNING, "running as root is NOT recommended");
+		/* A paranoia check */
+		if(setreuid(-1, 0) == 0)
+			err(1, "unable to completely drop privileges");
+
+		sp_messagex(NULL, LOG_DEBUG, "switched to user %s (uid %d, gid %d)", g_state.user, pw->pw_uid, pw->pw_gid);
+	}
+
+	if(geteuid() == 0)
+		sp_messagex(NULL, LOG_WARNING, "running as root is NOT recommended");
 }
 
 

@@ -47,22 +47,22 @@ AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
 
-# Debug mode
-AC_ARG_ENABLE(debug,
-	    AC_HELP_STRING([--enable-debug],
-	    [Compile binaries in debug mode]))
-
-if test "$enable_debug" = "yes"; then
-  CFLAGS="$CFLAGS -g -O0 -Wall"
-  AC_DEFINE_UNQUOTED(_DEBUG, 1, [In debug mode])
-  echo "enabling debug compile mode"
-fi
-
 # TODO: Figure out why we need this wierd hack
 ACX_PTHREAD( , [echo "ERROR: Pthread support not found."; exit 1] )
 
 LIBS="$PTHREAD_LIBS $LIBS"
 CFLAGS="$CFLAGS $PTHREAD_CFLAGS -D_POSIX_PTHREAD_SEMANTICS"
+
+AC_MSG_CHECKING([whether running on linux])
+case "$host" in
+*-*-linux-*)
+	platform_linux=yes
+	;;
+*)
+	platform_linux=no
+	;;
+esac
+AC_MSG_RESULT([$platform_linux])
 
 # Some checks for Solaris
 AC_CHECK_LIB(socket, getsockname)
@@ -77,7 +77,7 @@ AC_CHECK_HEADERS([unistd.h stdio.h stddef.h fcntl.h stdlib.h assert.h errno.h st
 # Check for linux type transparent proxy support
 AC_CHECK_HEADERS([linux/types.h linux/netfilter_ipv4.h],
 	AC_DEFINE(LINUX_NETFILTER, 1, [Whether the system supports a linux type transparent proxy]),
-	,
+	[test "$platform_linux" = "yes" && echo "ERROR: Required linux header missing" && exit 1],
 	[[
 	#ifdef HAVE_LIMITS_H
 	#include <limits.h>
@@ -88,7 +88,6 @@ AC_CHECK_HEADERS([linux/types.h linux/netfilter_ipv4.h],
 )
 
 # Checks for typedefs, structures, and compiler characteristics.
-AC_C_CONST
 AC_TYPE_SIZE_T
 
 # We use error checking mutexes whenever possible
@@ -108,12 +107,76 @@ AC_CHECK_FUNCS([memset strerror malloc realloc getopt strchr tolower getaddrinfo
 AC_CHECK_FUNCS([strlwr strlcat strlcpy strncat strncpy strcasestr setenv daemon])
 AC_CHECK_FUNCS([getline getdelim])
 
-# libcap2
-AC_CHECK_LIB([cap], [cap_get_proc], have_libcap="yes", have_libcap="no")
-if test $have_libcap = yes; then
-	AC_DEFINE(HAVE_LIBCAP, 1, [Have libcap2 package, libcap library])
-	LIBS="$LIBS -lcap"
+# --------------------------------------------------------------------
+# Linux tproxy support
+AC_ARG_ENABLE(tproxy,
+	AC_HELP_STRING([--enable-tproxy], [Enable linux true transparent proxy]))
+
+# We default to enable if linux
+if test "$enable_tproxy" = ""; then
+	enable_tproxy="$platform_linux"
 fi
+
+if test "$enable_tproxy" = "yes"; then
+	AC_CHECK_DECL(IP_TRANSPARENT,
+		[have_tproxy="yes"],
+		[have_tproxy="no"],
+		[[
+		#ifdef HAVE_LIMITS_H
+		#include <limits.h>
+		#endif
+		#include <sys/socket.h>
+		#include <netinet/in.h>
+		#include <linux/types.h>
+		#include <linux/netfilter_ipv4.h>
+		]]
+	)
+
+	if test "$enable_tproxy" = "yes"; then
+		AC_DEFINE(HAVE_IP_TRANSPARENT, $have_tproxy, "Linux transparent proxy")
+	else
+		AC_MSG_ERROR([Only linux 2.6.28 and later support true transparent proxy. See --disable-tproxy])
+	fi
+fi
+
+# --------------------------------------------------------------------
+# Capabilities support
+
+AC_ARG_ENABLE(capabilities,
+	AC_HELP_STRING([--enable-capabilities], [Enable linux capabilities support]))
+
+# We default to enable if linux
+if test "$enable_capabilities" = ""; then
+	enable_capabilities="$platform_linux"
+fi
+
+if test "$enable_capabilities" = "yes"; then
+	AC_CHECK_LIB([cap], [cap_get_proc], have_libcap="yes", have_libcap="no")
+	if test "$have_libcap" = "yes"; then
+		AC_DEFINE(HAVE_LIBCAP, 1, [Have libcap2 package, libcap library])
+		LIBS="$LIBS -lcap"
+	else
+		AC_MSG_ERROR([Could not find the libpcap2 libraries. See --disable-capabilities])
+	fi
+fi
+
+# --------------------------------------------------------------------
+# Debug Mode
+
+# Debug mode
+AC_ARG_ENABLE(debug,
+	    AC_HELP_STRING([--enable-debug],
+	    [Compile binaries in debug mode]))
+
+if test "$enable_debug" = "yes"; then
+	CFLAGS="$CFLAGS -g -O0 -Wall"
+	AC_DEFINE_UNQUOTED(_DEBUG, 1, [In debug mode])
+	echo "enabling debug compile mode"
+else
+	enable_debug="no"
+fi
+
+# --------------------------------------------------------------------
 
 # Have to resolve this for the path below
 if test "${prefix}" = "NONE"; then
@@ -124,3 +187,12 @@ AC_DEFINE_UNQUOTED(CONF_PREFIX, "`eval echo ${sysconfdir}`", [Installation Prefi
 
 AC_CONFIG_FILES([Makefile src/Makefile doc/Makefile])
 AC_OUTPUT
+
+# --------------------------------------------------------------------
+# Summary
+
+echo "
+True transparent proxy:   $enable_tproxy	--enable-tproxy
+Capabalities:             $enable_capabilities	--enable-capabilitios, libpcap2
+Debug Mode:               $enable_debug	--enable-debug
+"

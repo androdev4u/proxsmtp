@@ -169,7 +169,7 @@ int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sdst,
 	fcntl(fd, F_SETFD, fcntl(fd, F_GETFD, 0) | FD_CLOEXEC);
 
 	if (ssrc != NULL) {
-#ifdef LINUX_NETFILTER
+#ifdef HAVE_IP_TRANSPARENT
 		int value = 1;
 		if(setsockopt(fd, SOL_IP, IP_TRANSPARENT, &value, sizeof(value)) < 0) {
 			sp_message(ctx, LOG_DEBUG, "%s: couldn't set transparent mode on connection",

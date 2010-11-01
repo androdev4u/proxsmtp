@@ -122,20 +122,29 @@ if test "$enable_tproxy" = "yes"; then
 		[have_tproxy="yes"],
 		[have_tproxy="no"],
 		[[
-		#ifdef HAVE_LIMITS_H
-		#include <limits.h>
-		#endif
 		#include <sys/socket.h>
 		#include <netinet/in.h>
-		#include <linux/types.h>
-		#include <linux/netfilter_ipv4.h>
 		]]
 	)
 
-	if test "$enable_tproxy" = "yes"; then
-		AC_DEFINE(HAVE_IP_TRANSPARENT, $have_tproxy, "Linux transparent proxy")
+	if test "$have_tproxy" = "yes"; then
+		AC_DEFINE(HAVE_IP_TRANSPARENT, 1, [Linux transparent proxy])
+
 	else
-		AC_MSG_ERROR([Only linux 2.6.28 and later support true transparent proxy. See --disable-tproxy])
+		AC_MSG_CHECKING([whether broken IP_TRANSPARENT definition is present])
+		AC_COMPILE_IFELSE([[
+			#include <sys/socket.h>
+			#include <linux/in.h>
+			int main (void) { return IP_TRANSPARENT == 19; }
+		]], [have_tproxy="yes"], [have_tproxy="no"])
+		AC_MSG_RESULT([$have_tproxy])
+
+		if test "$have_tproxy" = "yes"; then
+			AC_DEFINE(HAVE_IP_TRANSPARENT, 1, [Linux transparent proxy])
+			AC_DEFINE(IP_TRANSPARENT, 19, [Fix missing linux header definition])
+		else
+			AC_MSG_ERROR([Only linux 2.6.28 and later support true transparent proxy. See --disable-tproxy])
+		fi
 	fi
 fi
 

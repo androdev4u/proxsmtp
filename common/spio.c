@@ -35,6 +35,8 @@
  *  Stef Walter <stef@memberwebs.com>
  */
 
+#include "config.h"
+
 /*
  * select() and stdio are basically mutually exclusive.
  * Hence all of this code to try to get some buffering
@@ -47,13 +49,6 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 
-#include <netinet/in.h>
-
-#ifdef HAVE_IP_TRANSPARENT
-#include <linux/types.h>
-#include <linux/netfilter_ipv4.h>
-#endif
-
 #include <ctype.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -63,6 +58,13 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include <errno.h>
+
+#include <netinet/in.h>
+
+#ifdef HAVE_IP_TRANSPARENT
+#include <linux/types.h>
+#include <linux/netfilter_ipv4.h>
+#endif
 
 #include "compat.h"
 #include "usuals.h"

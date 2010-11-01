@@ -156,7 +156,7 @@ if test "$enable_capabilities" = "yes"; then
 		AC_DEFINE(HAVE_LIBCAP, 1, [Have libcap2 package, libcap library])
 		LIBS="$LIBS -lcap"
 	else
-		AC_MSG_ERROR([Could not find the libpcap2 libraries. See --disable-capabilities])
+		AC_MSG_ERROR([Could not find the libcap2 libraries. See --disable-capabilities])
 	fi
 fi
 
@@ -193,6 +193,6 @@ AC_OUTPUT
 
 echo "
 True transparent proxy:   $enable_tproxy	--enable-tproxy
-Capabalities:             $enable_capabilities	--enable-capabilitios, libpcap2
+Capabalities:             $enable_capabilities	--enable-capabilities, libcap2
 Debug Mode:               $enable_debug	--enable-debug
 "

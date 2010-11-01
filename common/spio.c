@@ -47,6 +47,13 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 
+#include <netinet/in.h>
+
+#ifdef HAVE_IP_TRANSPARENT
+#include <linux/types.h>
+#include <linux/netfilter_ipv4.h>
+#endif
+
 #include <ctype.h>
 #include <stdio.h>
 #include <unistd.h>

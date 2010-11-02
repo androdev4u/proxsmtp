@@ -61,9 +61,10 @@
 typedef struct pxstate
 {
     /* Settings ------------------------------- */
+    int filter_type;                /* Type of filter: pipe, file, reject */
     const char* command;            /* The command to pipe email through */
+    const char* reject;             /* SMTP code for FILTER_REJECT*/
     struct timeval timeout;         /* The command timeout */
-    int pipe_cmd;                   /* Whether command is a pipe or not */
     const char* directory;          /* The directory for temp files */
     const char* header;             /* Header to include in output */
 }
@@ -73,12 +74,19 @@ pxstate_t;
  *  STRINGS
  */
 
+enum {
+	FILTER_PIPE = 1,
+	FILTER_FILE = 2,
+	FILTER_REJECT = 3
+};
+
 #define REJECTED            "Content Rejected"
 
 #define DEFAULT_CONFIG      CONF_PREFIX "/proxsmtpd.conf"
 #define DEFAULT_TIMEOUT     30
 
 #define CFG_FILTERCMD       "FilterCommand"
+#define CFG_FILTERREJECT    "FilterReject"
 #define CFG_FILTERTYPE      "FilterType"
 #define CFG_DIRECTORY       "TempDirectory"
 #define CFG_DEBUGFILES      "DebugFiles"
@@ -87,6 +95,7 @@ pxstate_t;
 
 #define TYPE_PIPE           "pipe"
 #define TYPE_FILE           "file"
+#define TYPE_REJECT         "reject"
 
 /* Poll time for waiting operations in milli seconds */
 #define POLL_TIME           20
@@ -142,7 +151,7 @@ int main(int argc, char* argv[])
     /* Setup some defaults */
     memset(&g_pxstate, 0, sizeof(g_pxstate));
     g_pxstate.directory = _PATH_TMP;
-    g_pxstate.pipe_cmd = 1;
+    g_pxstate.filter_type = FILTER_PIPE;
     g_pxstate.timeout.tv_sec = DEFAULT_TIMEOUT;
 
     sp_init("proxsmtpd");
@@ -218,14 +227,20 @@ int cb_check_data(spctx_t* ctx)
 {
     int r = 0;
 
-    if(!g_pxstate.command)
+    if(g_pxstate.filter_type == FILTER_REJECT)
+    {
+        if(sp_cache_data(ctx) < 0 ||
+           sp_fail_data(ctx, g_pxstate.reject) < 0)
+            return -1; /* Message already printed */
+        return 0;
+    }
+    else if(!g_pxstate.command)
     {
         sp_messagex(ctx, LOG_WARNING, "no filter command specified. passing message through");
 
         if(sp_cache_data(ctx) == -1 ||
            sp_done_data(ctx, g_pxstate.header) == -1)
             return -1;  /* Message already printed */
-
         return 0;
     }
 
@@ -233,7 +248,7 @@ int cb_check_data(spctx_t* ctx)
     while(waitpid(-1, &r, WNOHANG) > 0)
         ;
 
-    if(g_pxstate.pipe_cmd)
+    if(g_pxstate.filter_type == FILTER_PIPE)
         r = process_pipe_command(ctx);
     else
         r = process_file_command(ctx);
@@ -274,11 +289,20 @@ int cb_parse_option(const char* name, const char* value)
     else if(strcasecmp(CFG_FILTERTYPE, name) == 0)
     {
         if(strcasecmp(value, TYPE_PIPE) == 0)
-            g_pxstate.pipe_cmd = 1;
+            g_pxstate.filter_type = FILTER_PIPE;
         else if(strcasecmp(value, TYPE_FILE) == 0)
-            g_pxstate.pipe_cmd = 0;
+            g_pxstate.filter_type = FILTER_FILE;
+        else if(strcasecmp(value, TYPE_REJECT) == 0)
+            g_pxstate.filter_type = FILTER_REJECT;
         else
-            errx(2, "invalid value for " CFG_FILTERTYPE " (must specify 'pipe' or 'file')");
+            errx(2, "invalid value for " CFG_FILTERTYPE
+                 " (must specify '" TYPE_PIPE "' or '" TYPE_FILE "' or '" TYPE_REJECT "')");
+        return 1;
+    }
+
+    else if(strcasecmp(CFG_FILTERREJECT, name) == 0)
+    {
+        g_pxstate.reject = value;
         return 1;
     }
 

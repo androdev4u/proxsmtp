@@ -333,6 +333,15 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
     if(SANY_TYPE(g_state.listenaddr) == AF_UNIX)
         unlink(g_state.listenname);
 
+#ifdef HAVE_IP_TRANSPARENT
+    if(g_state.transparent)
+    {
+        int value = 1;
+        if(setsockopt(sock, SOL_IP, IP_TRANSPARENT, &value, sizeof(value)) < 0)
+            sp_message(NULL, LOG_WARNING, "couldn't set transparent mode on socket");
+    }
+#endif
+
     if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
     {
         sp_message(NULL, LOG_CRIT, "couldn't bind to address: %s", g_state.listenname);

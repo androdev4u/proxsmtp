@@ -232,6 +232,13 @@ int sp_done_data(spctx_t* ctx, const char *header);
 int sp_fail_data(spctx_t* ctx, const char* smtp_status);
 
 /*
+ * Helper method to pass through the entire DATA part of
+ * the email to the server. No processing is done, and no
+ * other sp_xxxx_data() calls are necessary.
+ */
+int sp_pass_data(spctx_t* ctx);
+
+/*
  * Setup the environment with context info. This is useful
  * if you're going to fork another process. Be sure to exec
  * soon after to prevent the strings from going out of scope.

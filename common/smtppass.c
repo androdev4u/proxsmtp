@@ -889,34 +889,6 @@ static int make_connections(spctx_t* ctx, int client)
  *  SMTP HANDLING
  */
 
-static int data_passthru(spctx_t* ctx)
-{
-	int r, count = 0;
-	const char* data;
-
-	while((r = sp_read_data(ctx, &data)) != 0)
-	{
-		if(r < 0)
-			return -1;  /* Message already printed */
-
-		count += r;
-
-		if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)data, r) < 0)
-			return -1;
-	}
-
-	if(spio_write_data(ctx, &(ctx->server), DATA_END_SIG) < 0)
-	{
-		/* Tell the client it went wrong */
-		spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
-		return -1;
-	}
-
-	sp_add_log(ctx, "status=", "SKIPPED");
-	sp_messagex(ctx, LOG_DEBUG, "skipped %d data bytes", count);
-	return count;
-}
-
 static int should_skip_processing(spctx_t* ctx)
 {
 	if(ctx->authenticated && (g_state.skip & SKIP_AUTHENTICATED))
@@ -938,7 +910,6 @@ static int smtp_passthru(spctx_t* ctx)
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
     int auth_started = 0;   /* Started performing authentication */
-    int data_mode = 0;      /* Skip processing of data */
 
     /* XCLIENT is for use in access control */
     int xclient_sup = 0;    /* Is XCLIENT supported? */
@@ -982,9 +953,6 @@ static int smtp_passthru(spctx_t* ctx)
             /* Only valid after EHLO or HELO commands */
             filter_host = 0;
 
-            /* Only valid after a DATA command (when should skip) */
-            data_mode = 0;
-
             /*
              * At this point we may want to send our XCLIENT. This is a per
              * connection command.
@@ -1010,7 +978,8 @@ static int smtp_passthru(spctx_t* ctx)
             {
                 if(should_skip_processing (ctx))
                 {
-                    data_mode = 1;
+                    if(sp_pass_data(ctx) < 0)
+                        RETURN(-1);
                 }
                 else
                 {
@@ -1022,16 +991,16 @@ static int smtp_passthru(spctx_t* ctx)
 
                     if(cb_check_data(ctx) == -1)
                         RETURN(-1);
-
-                    /* Print the log out for this email */
-                    sp_messagex(ctx, LOG_INFO, "%s", ctx->logline);
-
-                    /* Done with that email */
-                    cleanup_context(ctx);
-
-                    /* Command handled */
-                    continue;
                 }
+
+                /* Print the log out for this email */
+                sp_messagex(ctx, LOG_INFO, "%s", ctx->logline);
+
+                /* Done with that email */
+                cleanup_context(ctx);
+
+                /* Command handled */
+                continue;
             }
 
             /*
@@ -1141,16 +1110,6 @@ static int smtp_passthru(spctx_t* ctx)
                     /* Command handled */
                     continue;
                 }
-            }
-
-            /*
-             * If we're preparing for data mode, and didn't get a satisfactory
-             * repsonse from server then cancel it.
-             */
-            if(data_mode && !get_continue_rsp(S_LINE))
-            {
-                sp_messagex(ctx, LOG_DEBUG, "server did not accept data");
-                data_mode = 0;
             }
 
             if((p = get_successful_rsp(S_LINE, &cont)) != NULL)
@@ -1298,14 +1257,6 @@ static int smtp_passthru(spctx_t* ctx)
             /* Send the line to the client */
             if(spio_write_data(ctx, &(ctx->client), S_LINE) == -1)
                 RETURN(-1);
-
-            /* Should we enter data passthru mode? */
-            if(data_mode)
-            {
-                data_mode = 0;
-                if(data_passthru(ctx) < 0)
-                    RETURN(-1);
-            }
 
             continue;
         }
@@ -1859,6 +1810,61 @@ cleanup:
         fclose(file); /* read-only so no error check */
 
     return ret;
+}
+
+int sp_pass_data(spctx_t* ctx)
+{
+	int count = 0;
+	const char *data;
+	ssize_t rc;
+
+	/* Ask the server for permission to send data */
+	if(spio_write_data(ctx, &(ctx->server), SMTP_DATA) < 0)
+		return -1;
+
+	if(read_server_response(ctx) == -1)
+		return -1;
+
+	/* Send the response to the client */
+	if(spio_write_data(ctx, &(ctx->client), ctx->server.line) == -1)
+		return -1;
+
+	/* If server returns an error then tell the client */
+	if(!is_first_word(ctx->server.line, DATA_RSP, KL(DATA_RSP)))
+	{
+		sp_messagex(ctx, LOG_DEBUG, "server refused data transfer");
+		return 0;
+	}
+
+	while((rc = sp_read_data(ctx, &data)) != 0)
+	{
+		if(rc < 0)
+			return -1;  /* Message already printed */
+		count += rc;
+		if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)data, rc) < 0)
+			return -1;
+	}
+
+	if(spio_write_data(ctx, &(ctx->server), DATA_END_SIG) < 0)
+	{
+		/* Tell the client it went wrong */
+		spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
+		return -1;
+	}
+
+	sp_messagex(ctx, LOG_DEBUG, "skipped email data");
+
+	/* Okay read the response from the server and echo it to the client */
+	if(read_server_response(ctx) == -1)
+		return -1;
+
+	if(spio_write_data(ctx, &(ctx->client), ctx->server.line) == -1)
+		return -1;
+
+	sp_add_log(ctx, "status=", "SKIPPED");
+	sp_messagex(ctx, LOG_DEBUG, "skipped %d data bytes", count);
+
+	return 0;
 }
 
 int sp_fail_data(spctx_t* ctx, const char* smtp_status)

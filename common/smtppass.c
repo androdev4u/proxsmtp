@@ -906,6 +906,7 @@ static int data_passthru(spctx_t* ctx)
 
 	}
 
+	sp_add_log(ctx, "status=", "SKIPPED");
 	sp_messagex(ctx, LOG_DEBUG, "skipped %d data bytes", count);
 	return count;
 }

@@ -229,6 +229,7 @@ int cb_check_data(spctx_t* ctx)
 
     if(g_pxstate.filter_type == FILTER_REJECT)
     {
+        sp_add_log(ctx, "status=", "REJECTED");
         if(sp_fail_data(ctx, g_pxstate.reject) < 0)
             return -1; /* Message already printed */
         return 0;

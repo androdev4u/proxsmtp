@@ -901,9 +901,15 @@ static int data_passthru(spctx_t* ctx)
 
 		count += r;
 
-		if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)data, r) == -1)
+		if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)data, r) < 0)
 			return -1;
+	}
 
+	if(spio_write_data(ctx, &(ctx->server), DATA_END_SIG) < 0)
+	{
+		/* Tell the client it went wrong */
+		spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
+		return -1;
 	}
 
 	sp_add_log(ctx, "status=", "SKIPPED");

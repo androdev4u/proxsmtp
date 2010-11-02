@@ -134,12 +134,14 @@ spthread_t;
 #define BDAT_CMD            "BDAT"
 #define XCLIENT_CMD         "XCLIENT"
 #define XFORWARD_CMD        "XFORWARD"
+#define AUTH_CMD            "AUTH"
 
 #define DATA_END_SIG        "." CRLF
 
 #define DATA_RSP            "354"
 #define OK_RSP              "250"
 #define START_RSP           "220"
+#define AUTH_SUCCESS_RSP    "235"
 
 #define RCVD_HEADER         "Received:"
 
@@ -893,6 +895,7 @@ static int smtp_passthru(spctx_t* ctx)
 
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
+    int auth_started = 0;   /* Started performing authentication */
 
     /* XCLIENT is for use in access control */
     int xclient_sup = 0;    /* Is XCLIENT supported? */
@@ -1036,6 +1039,12 @@ static int smtp_passthru(spctx_t* ctx)
 
                 /* Command handled */
                 continue;
+            }
+
+            else if(is_first_word(C_LINE, AUTH_CMD, KL(AUTH_CMD)))
+            {
+                sp_messagex(ctx, LOG_DEBUG, "Tracking authentication");
+                auth_started = 1;
             }
 
             /* All other commands just get passed through to server */
@@ -1210,6 +1219,20 @@ static int smtp_passthru(spctx_t* ctx)
                 else if(is_first_word(C_LINE, RSET_CMD, KL(RSET_CMD)))
                 {
                     cleanup_context(ctx);
+                }
+
+                /* Successful authentication */
+                else if(is_first_word(S_LINE, AUTH_SUCCESS_RSP, KL(AUTH_SUCCESS_RSP)))
+                {
+                    if(auth_started)
+                    {
+                        sp_messagex(ctx, LOG_DEBUG, "Client authenticated successfully");
+                        ctx->authenticated = 1;
+                    }
+                    else
+                    {
+                        sp_messagex(ctx, LOG_WARNING, "Authentication success code without AUTH");
+                    }
                 }
             }
 

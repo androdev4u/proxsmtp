@@ -219,7 +219,6 @@ static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
 static char* parse_xforward(char* line, const char* part);
 static const char* get_successful_rsp(const char* line, int* cont);
-static const char* get_continue_rsp(const char* line);
 static void do_server_noop(spctx_t* ctx);
 
 /* Used externally in some cases */
@@ -1334,20 +1333,6 @@ static char* parse_xforward(char* line, const char* part)
     return t;
 }
 
-static const char* get_continue_rsp(const char* line)
-{
-    /*
-     * We check for '3XX xxx' type replies
-     */
-
-    line = trim_start(line);
-
-    if(line[0] == '3' && isdigit(line[1]) && isdigit(line[2]) && line[3] == ' ')
-        return line + 4;
-
-    return NULL;
-}
-
 static const char* get_successful_rsp(const char* line, int* cont)
 {
     /*
@@ -1851,8 +1836,6 @@ int sp_pass_data(spctx_t* ctx)
 		spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
 		return -1;
 	}
-
-	sp_messagex(ctx, LOG_DEBUG, "skipped email data");
 
 	/* Okay read the response from the server and echo it to the client */
 	if(read_server_response(ctx) == -1)

@@ -43,6 +43,7 @@ AM_CONFIG_HEADER([config.h])
 
 # Checks for programs.
 AC_PROG_CC
+AM_PROG_CC_C_O
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
@@ -186,6 +187,21 @@ else
 fi
 
 # --------------------------------------------------------------------
+# Strict Mode
+
+# Strict mode
+AC_ARG_ENABLE(strict,
+	    AC_HELP_STRING([--enable-strict],
+	    [Compile with all warnings strictly enabled]))
+
+if test "$enable_strict" = "yes"; then
+	CFLAGS="$CFLAGS -Wall -Werror"
+	echo "enabling strict compile mode"
+else
+	enable_strict="no"
+fi
+
+# --------------------------------------------------------------------
 
 # Have to resolve this for the path below
 if test "${prefix}" = "NONE"; then
@@ -204,4 +220,5 @@ echo "
 True transparent proxy:   $enable_tproxy	--enable-tproxy
 Capabalities:             $enable_capabilities	--enable-capabilities, libcap2
 Debug Mode:               $enable_debug	--enable-debug
+Strict Mode:              $enable_strict	--enable-strict
 "

@@ -229,12 +229,16 @@ int cb_check_data(spctx_t* ctx)
 
     if(g_pxstate.filter_type == FILTER_REJECT)
     {
-        if(sp_cache_data(ctx) < 0 ||
-           sp_fail_data(ctx, g_pxstate.reject) < 0)
+        if(sp_fail_data(ctx, g_pxstate.reject) < 0)
             return -1; /* Message already printed */
         return 0;
     }
-    else if(!g_pxstate.command)
+
+    /* Tell client to start sending data */
+    if(sp_start_data (ctx) < 0)
+        return -1; /* Message already printed */
+
+    if(!g_pxstate.command)
     {
         sp_messagex(ctx, LOG_WARNING, "no filter command specified. passing message through");
 

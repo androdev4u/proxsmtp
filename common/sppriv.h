@@ -41,6 +41,10 @@
 
 #include "smtppass.h"
 
+enum {
+	SKIP_AUTHENTICATED = 0x01,
+};
+
 typedef struct spstate
 {
     /* Settings ------------------------------- */
@@ -54,6 +58,7 @@ typedef struct spstate
     const char* user;               /* User to run as */
     const char* pidfile;            /* The pid file for daemon */
     const char* header;             /* A header to include in the email */
+    int skip;                       /* Various types of email to skip processing */
 
     struct sockaddr_any outaddr;    /* The outgoing address */
     const char* outname;

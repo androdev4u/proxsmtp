@@ -191,6 +191,12 @@ int sp_parse_option(const char* name, const char* option);
 void sp_add_log(spctx_t* ctx, char* prefix, char* line);
 
 /*
+ * Tells client to start sending data. Sends appropriate
+ * response code.
+ */
+int sp_start_data(spctx_t* ctx);
+
+/*
  * Reads a line of DATA from client. Or less than a line if
  * line is longer than LINE_LENGTH. No trimming or anything
  * is done on the read line. This will end automatically

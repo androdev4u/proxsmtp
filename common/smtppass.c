@@ -180,6 +180,9 @@ spthread_t;
 #define CFG_USER            "User"
 #define CFG_PIDFILE         "PidFile"
 #define CFG_XCLIENT         "XClient"
+#define CFG_SKIP            "Skip"
+
+#define VAL_AUTHENTICATED   "authenticated"
 
 /* -----------------------------------------------------------------------
  *  DEFAULT SETTINGS
@@ -216,6 +219,7 @@ static int parse_config_file(const char* configfile);
 static char* parse_address(char* line);
 static char* parse_xforward(char* line, const char* part);
 static const char* get_successful_rsp(const char* line, int* cont);
+static const char* get_continue_rsp(const char* line);
 static void do_server_noop(spctx_t* ctx);
 
 /* Used externally in some cases */
@@ -885,6 +889,37 @@ static int make_connections(spctx_t* ctx, int client)
  *  SMTP HANDLING
  */
 
+static int data_passthru(spctx_t* ctx)
+{
+	int r, count = 0;
+	const char* data;
+
+	while((r = sp_read_data(ctx, &data)) != 0)
+	{
+		if(r < 0)
+			return -1;  /* Message already printed */
+
+		count += r;
+
+		if(spio_write_data_raw(ctx, &(ctx->server), (unsigned char*)data, r) == -1)
+			return -1;
+
+	}
+
+	sp_messagex(ctx, LOG_DEBUG, "skipped %d data bytes", count);
+	return count;
+}
+
+static int should_skip_processing(spctx_t* ctx)
+{
+	if(ctx->authenticated && (g_state.skip & SKIP_AUTHENTICATED))
+	{
+		sp_messagex(ctx, LOG_DEBUG, "skipping data processing because client is authenticated");
+		return 1;
+	}
+	return 0;
+}
+
 static int smtp_passthru(spctx_t* ctx)
 {
     char* t;
@@ -896,6 +931,7 @@ static int smtp_passthru(spctx_t* ctx)
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
     int auth_started = 0;   /* Started performing authentication */
+    int data_mode = 0;      /* Skip processing of data */
 
     /* XCLIENT is for use in access control */
     int xclient_sup = 0;    /* Is XCLIENT supported? */
@@ -939,6 +975,9 @@ static int smtp_passthru(spctx_t* ctx)
             /* Only valid after EHLO or HELO commands */
             filter_host = 0;
 
+            /* Only valid after a DATA command (when should skip) */
+            data_mode = 0;
+
             /*
              * At this point we may want to send our XCLIENT. This is a per
              * connection command.
@@ -962,26 +1001,30 @@ static int smtp_passthru(spctx_t* ctx)
             /* Handle the DATA section via our AV checker */
             if(is_first_word(C_LINE, DATA_CMD, KL(DATA_CMD)))
             {
-                /* Send back the intermediate response to the client */
-                if(spio_write_data(ctx, &(ctx->client), SMTP_DATAINTERMED) == -1)
-                    RETURN(-1);
+                if(should_skip_processing (ctx))
+                {
+                    data_mode = 1;
+                }
+                else
+                {
+                    /*
+                     * Now go into scan mode. This also handles the eventual
+                     * sending of the data to the server, making the av check
+                     * transparent
+                     */
 
-                /*
-                 * Now go into scan mode. This also handles the eventual
-                 * sending of the data to the server, making the av check
-                 * transparent
-                 */
-                if(cb_check_data(ctx) == -1)
-                    RETURN(-1);
+                    if(cb_check_data(ctx) == -1)
+                        RETURN(-1);
 
-                /* Print the log out for this email */
-                sp_messagex(ctx, LOG_INFO, "%s", ctx->logline);
+                    /* Print the log out for this email */
+                    sp_messagex(ctx, LOG_INFO, "%s", ctx->logline);
 
-                /* Done with that email */
-                cleanup_context(ctx);
+                    /* Done with that email */
+                    cleanup_context(ctx);
 
-                /* Command handled */
-                continue;
+                    /* Command handled */
+                    continue;
+                }
             }
 
             /*
@@ -1043,7 +1086,6 @@ static int smtp_passthru(spctx_t* ctx)
 
             else if(is_first_word(C_LINE, AUTH_CMD, KL(AUTH_CMD)))
             {
-                sp_messagex(ctx, LOG_DEBUG, "Tracking authentication");
                 auth_started = 1;
             }
 
@@ -1092,6 +1134,16 @@ static int smtp_passthru(spctx_t* ctx)
                     /* Command handled */
                     continue;
                 }
+            }
+
+            /*
+             * If we're preparing for data mode, and didn't get a satisfactory
+             * repsonse from server then cancel it.
+             */
+            if(data_mode && !get_continue_rsp(S_LINE))
+            {
+                sp_messagex(ctx, LOG_DEBUG, "server did not accept data");
+                data_mode = 0;
             }
 
             if((p = get_successful_rsp(S_LINE, &cont)) != NULL)
@@ -1236,8 +1288,17 @@ static int smtp_passthru(spctx_t* ctx)
                 }
             }
 
+            /* Send the line to the client */
             if(spio_write_data(ctx, &(ctx->client), S_LINE) == -1)
                 RETURN(-1);
+
+            /* Should we enter data passthru mode? */
+            if(data_mode)
+            {
+                data_mode = 0;
+                if(data_passthru(ctx) < 0)
+                    RETURN(-1);
+            }
 
             continue;
         }
@@ -1315,6 +1376,20 @@ static char* parse_xforward(char* line, const char* part)
     return t;
 }
 
+static const char* get_continue_rsp(const char* line)
+{
+    /*
+     * We check for '3XX xxx' type replies
+     */
+
+    line = trim_start(line);
+
+    if(line[0] == '3' && isdigit(line[1]) && isdigit(line[2]) && line[3] == ' ')
+        return line + 4;
+
+    return NULL;
+}
+
 static const char* get_successful_rsp(const char* line, int* cont)
 {
     /*
@@ -1366,6 +1441,12 @@ void sp_add_log(spctx_t* ctx, char* prefix, char* line)
 
     /* Skip later white space */
     trim_end(t);
+}
+
+int sp_start_data(spctx_t* ctx)
+{
+	/* Send back the intermediate response to the client */
+	return spio_write_data(ctx, &(ctx->client), SMTP_DATAINTERMED);
 }
 
 int sp_read_data(spctx_t* ctx, const char** data)
@@ -2093,6 +2174,16 @@ int sp_parse_option(const char* name, const char* value)
         else
             g_state.pidfile = value;
         ret = 1;
+    }
+
+    else if(strcasecmp(CFG_SKIP, name) == 0)
+    {
+        if(strcasecmp(value, VAL_AUTHENTICATED) == 0)
+            g_state.skip |= SKIP_AUTHENTICATED;
+        else
+            errx(2, "invalid value for " CFG_SKIP
+                 " (must specify '" VAL_AUTHENTICATED "')");
+        return 1;
     }
 
     /* Always pass through to program */

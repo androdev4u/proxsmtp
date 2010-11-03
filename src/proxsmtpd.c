@@ -82,6 +82,7 @@ enum {
 
 #define REJECTED            "Content Rejected"
 
+#define DEFAULT_REJECT      "530 Email Rejected"
 #define DEFAULT_CONFIG      CONF_PREFIX "/proxsmtpd.conf"
 #define DEFAULT_TIMEOUT     30
 
@@ -153,6 +154,7 @@ int main(int argc, char* argv[])
     g_pxstate.directory = _PATH_TMP;
     g_pxstate.filter_type = FILTER_PIPE;
     g_pxstate.timeout.tv_sec = DEFAULT_TIMEOUT;
+    g_pxstate.reject = DEFAULT_REJECT;
 
     sp_init("proxsmtpd");
 

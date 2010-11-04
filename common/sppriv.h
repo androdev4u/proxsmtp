@@ -45,6 +45,12 @@ enum {
 	SKIP_AUTHENTICATED = 0x01,
 };
 
+enum {
+	TRANSPARENT_OFF = 0,
+	TRANSPARENT_CLIENT = 1,
+	TRANSPARENT_FULL = 2,
+};
+
 typedef struct spstate
 {
     /* Settings ------------------------------- */

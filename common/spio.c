@@ -187,6 +187,8 @@ int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sdst,
 		}
 #else
 		/* Can't set source address on other OS */
+		sp_messagex(ctx, LOG_WARNING, "%s: couldn't set transparent mode on connection: not supported",
+		            GET_IO_NAME(io));
 		ssrc = NULL;
 #endif
 	}

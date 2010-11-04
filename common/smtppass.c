@@ -183,6 +183,8 @@ spthread_t;
 #define CFG_SKIP            "Skip"
 
 #define VAL_AUTHENTICATED   "authenticated"
+#define VAL_CLIENT          "client"
+#define VAL_FULL            "full"
 
 /* -----------------------------------------------------------------------
  *  DEFAULT SETTINGS
@@ -339,7 +341,7 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
         unlink(g_state.listenname);
 
 #ifdef HAVE_IP_TRANSPARENT
-    if(g_state.transparent)
+    if(g_state.transparent == TRANSPARENT_FULL)
     {
         int value = 1;
         if(setsockopt(sock, SOL_IP, IP_TRANSPARENT, &value, sizeof(value)) < 0)
@@ -807,7 +809,7 @@ static int make_connections(spctx_t* ctx, int client)
     srcname = NULL;
 
     /* For transparent proxying we have to discover the address to connect to */
-    if(g_state.transparent)
+    if(g_state.transparent != TRANSPARENT_OFF)
     {
         memset(&addr, 0, sizeof(addr));
         SANY_LEN(addr) = sizeof(addr);
@@ -830,7 +832,10 @@ static int make_connections(spctx_t* ctx, int client)
         }
 
         dstaddr = &addr;
-#ifdef LINUX_NETFILTER
+    }
+
+    if (g_state.transparent == TRANSPARENT_FULL) {
+#ifdef HAVE_IP_TRANSPARENT
         srcaddr = &peeraddr;
         srcname = ctx->client.peername;
 #endif
@@ -2139,8 +2144,35 @@ int sp_parse_option(const char* name, const char* value)
 
     else if(strcasecmp(CFG_TRANSPARENT, name) == 0)
     {
-        if((g_state.transparent = strtob(value)) == -1)
-            errx(2, "invalid value for " CFG_TRANSPARENT);
+        int val = strtob(value);
+        if(val == -1)
+        {
+            if(strcasecmp(VAL_CLIENT, value) == 0)
+            {
+                g_state.transparent = TRANSPARENT_CLIENT;
+            }
+            else if(strcasecmp(VAL_FULL, value) == 0)
+            {
+#ifdef HAVE_IP_TRANSPARENT
+                g_state.transparent = TRANSPARENT_FULL;
+#else
+                errx(2, "invalid value for " CFG_TRANSPARENT
+                     ": was not built with support for true full transparent proxy");
+#endif
+            }
+            else
+            {
+                errx(2, "invalid value for " CFG_TRANSPARENT);
+            }
+        }
+        else if (val)
+        {
+            g_state.transparent = TRANSPARENT_CLIENT;
+        }
+        else
+        {
+            g_state.transparent = TRANSPARENT_OFF;
+        }
         ret = 1;
     }
 

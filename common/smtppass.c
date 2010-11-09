@@ -151,6 +151,9 @@ spthread_t;
 /* Maximum length of the header argument */
 #define MAX_HEADER_LENGTH 	1024
 
+/* Maximum number of concurrent connections */
+#define TOP_MAX_CONNECTIONS     10240
+
 /*
  * asctime_r manpage: "stores the string in a user-supplied buffer of
  * length at least 26".  We'll need some more bytes to put timezone
@@ -2098,8 +2101,9 @@ int sp_parse_option(const char* name, const char* value)
     if(strcasecmp(CFG_MAXTHREADS, name) == 0)
     {
         g_state.max_threads = strtol(value, &t, 10);
-        if(*t || g_state.max_threads <= 1 || g_state.max_threads >= 1024)
-            errx(2, "invalid setting: " CFG_MAXTHREADS " (must be between 1 and 1024)");
+        if(*t || g_state.max_threads <= 1 || g_state.max_threads >= TOP_MAX_CONNECTIONS)
+            errx(2, "invalid setting: " CFG_MAXTHREADS " (must be between 1 and %d)",
+                 TOP_MAX_CONNECTIONS);
         ret = 1;
     }
 

@@ -180,7 +180,8 @@ int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sdst,
 	if (ssrc != NULL) {
 #ifdef HAVE_IP_TRANSPARENT
 		int value = 1;
-		if(setsockopt(fd, SOL_IP, IP_TRANSPARENT, &value, sizeof(value)) < 0) {
+		if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) < 0 ||
+		   setsockopt(fd, SOL_IP, IP_TRANSPARENT, &value, sizeof(value)) < 0) {
 			sp_message(ctx, LOG_DEBUG, "%s: couldn't set transparent mode on connection",
 			           GET_IO_NAME(io));
 			ssrc = NULL;

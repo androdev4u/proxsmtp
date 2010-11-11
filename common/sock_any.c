@@ -367,14 +367,14 @@ int sock_any_cmp(const struct sockaddr_any* a1, const struct sockaddr_any* a2, i
     case AF_INET:
         if(memcmp(&(a1->s.in.sin_addr), &(a2->s.in.sin_addr), sizeof(a2->s.in.sin_addr)) != 0)
             return -1;
-        if(!(opts && SANY_OPT_NOPORT) && a1->s.in.sin_port != a2->s.in.sin_port)
+        if(!(opts & SANY_OPT_NOPORT) && a1->s.in.sin_port != a2->s.in.sin_port)
             return -1;
         return 0;
 #ifdef HAVE_INET6
     case AF_INET6:
         if(memcmp(&(a1->s.in6.sin6_addr), &(a2->s.in6.sin6_addr), sizeof(a2->s.in6.sin6_addr)) != 0)
             return -1;
-        if(!(opts && SANY_OPT_NOPORT) && a1->s.in6.sin6_port != a2->s.in6.sin6_port)
+        if(!(opts & SANY_OPT_NOPORT) && a1->s.in6.sin6_port != a2->s.in6.sin6_port)
             return -1;
         return 0;
 #endif
@@ -382,4 +382,25 @@ int sock_any_cmp(const struct sockaddr_any* a1, const struct sockaddr_any* a2, i
         errno = EAFNOSUPPORT;
         return -1;
     }
+}
+
+void
+sock_any_cpy(struct sockaddr_any* dst, const struct sockaddr_any* src, int opts)
+{
+	memcpy(dst, src, sizeof(struct sockaddr_any));
+	switch(src->s.a.sa_family)
+	{
+	case AF_INET:
+		if(opts & SANY_OPT_NOPORT)
+			dst->s.in.sin_port = 0;
+		break;
+#ifdef HAVE_INET6
+	case AF_INET6:
+		if(opts & SANY_OPT_NOPORT)
+			dst->s.in6.sin_port = 0;
+		break;
+#endif
+	default:
+		break;
+	}
 }

@@ -87,4 +87,6 @@ int sock_any_ntop(const struct sockaddr_any* any, char* addr, size_t addrlen, in
 
 int sock_any_cmp(const struct sockaddr_any* a1, const struct sockaddr_any* a2, int opts);
 
+void sock_any_cpy(struct sockaddr_any* src, const struct sockaddr_any* dst, int opts);
+
 #endif /* __SOCK_ANY_H__ */

@@ -792,6 +792,7 @@ cleanup:
 static int make_connections(spctx_t* ctx, int client)
 {
     struct sockaddr_any peeraddr;
+    struct sockaddr_any peersrc;
     struct sockaddr_any addr;
     struct sockaddr_any* dstaddr;
     struct sockaddr_any* srcaddr;
@@ -839,7 +840,8 @@ static int make_connections(spctx_t* ctx, int client)
 
     if (g_state.transparent == TRANSPARENT_FULL) {
 #ifdef HAVE_IP_TRANSPARENT
-        srcaddr = &peeraddr;
+        sock_any_cpy (&peersrc, &peeraddr, SANY_OPT_NOPORT);
+        srcaddr = &peersrc;
         srcname = ctx->client.peername;
 #endif
     }

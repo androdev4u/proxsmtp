@@ -723,6 +723,7 @@ static void cleanup_context(spctx_t* ctx)
     }
 
     ctx->logline[0] = 0;
+    sp_add_log(ctx, "client=", ctx->client.peername);
 }
 
 

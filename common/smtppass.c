@@ -1075,18 +1075,21 @@ static int smtp_passthru(spctx_t* ctx)
                 auth_started = 1;
             }
 
-            else if(is_first_word(C_LINE, FROM_CMD, KL(FROM_CMD)) ||
-                    is_first_word(C_LINE, TO_CMD, KL(TO_CMD)))
+            else if(check_first_word(C_LINE, FROM_CMD, KL(FROM_CMD), SMTP_DELIMS) > 0 ||
+                    check_first_word(C_LINE, TO_CMD, KL(TO_CMD), SMTP_DELIMS) > 0)
             {
-                r = cb_check_pre(ctx);
-                if(r < 0)
+                if(!should_skip_processing(ctx))
                 {
-                    RETURN(-1);
-                }
-                else if(r == 0)
-                {
-                    cleanup_context(ctx);
-                    continue;
+                    r = cb_check_pre(ctx);
+                    if(r < 0)
+                    {
+                        RETURN(-1);
+                    }
+                    else if(r == 0)
+                    {
+                        cleanup_context(ctx);
+                        continue;
+                    }
                 }
             }
 

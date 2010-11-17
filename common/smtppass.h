@@ -239,6 +239,11 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status);
 int sp_pass_data(spctx_t* ctx);
 
 /*
+ * Just sends a failure message to the client.
+ */
+int sp_fail_msg(spctx_t* ctx, const char* smtp_status);
+
+/*
  * Setup the environment with context info. This is useful
  * if you're going to fork another process. Be sure to exec
  * soon after to prevent the strings from going out of scope.
@@ -273,6 +278,13 @@ void sp_unlock();
  */
 extern spctx_t* cb_new_context();
 extern void cb_del_context(spctx_t* ctx);
+
+/*
+ * Called when an email envelope is staring to be sent.
+ * If this function returns a string, it is used as a failure
+ * message.
+ */
+extern int cb_check_pre(spctx_t* ctx);
 
 /*
  * Called when the data section of an email is being transferred.

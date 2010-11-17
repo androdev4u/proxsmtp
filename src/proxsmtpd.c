@@ -225,6 +225,19 @@ static void usage()
  *  SP CALLBACKS
  */
 
+int cb_check_pre(spctx_t* ctx)
+{
+	if(g_pxstate.filter_type == FILTER_REJECT)
+	{
+		sp_add_log(ctx, "status=", "REJECTED");
+		if(sp_fail_msg(ctx, g_pxstate.reject) < 0)
+			return -1; /* Message already printed */
+		return 0;
+	}
+
+	return 1;
+}
+
 int cb_check_data(spctx_t* ctx)
 {
     int r = 0;

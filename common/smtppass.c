@@ -1075,6 +1075,21 @@ static int smtp_passthru(spctx_t* ctx)
                 auth_started = 1;
             }
 
+            else if(is_first_word(C_LINE, FROM_CMD, KL(FROM_CMD)) ||
+                    is_first_word(C_LINE, TO_CMD, KL(TO_CMD)))
+            {
+                r = cb_check_pre(ctx);
+                if(r < 0)
+                {
+                    RETURN(-1);
+                }
+                else if(r == 0)
+                {
+                    cleanup_context(ctx);
+                    continue;
+                }
+            }
+
             /* All other commands just get passed through to server */
             if(spio_write_data(ctx, &(ctx->server), C_LINE) == -1)
                 RETURN(-1);
@@ -1863,6 +1878,19 @@ int sp_pass_data(spctx_t* ctx)
 
 int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 {
+    if(sp_fail_msg(ctx, smtp_status) < 0)
+        return -1;
+
+     /* Tell the server to forget about the current message */
+     if(spio_write_data(ctx, &(ctx->server), SMTP_RSET) == -1 ||
+        read_server_response(ctx) == -1)
+         return -1;
+
+    return 0;
+}
+
+int sp_fail_msg(spctx_t* ctx, const char* smtp_status)
+{
     char buf[256 + KL(SMTP_REJPREFIX) + KL(CRLF) + 1];
     char* t = NULL;
     int len, x;
@@ -1894,11 +1922,6 @@ int sp_fail_data(spctx_t* ctx, const char* smtp_status)
 
     if(spio_write_data(ctx, &(ctx->client), smtp_status) == -1)
         return -1;
-
-     /* Tell the server to forget about the current message */
-     if(spio_write_data(ctx, &(ctx->server), SMTP_RSET) == -1 ||
-        read_server_response(ctx) == -1)
-         return -1;
 
     return 0;
 }

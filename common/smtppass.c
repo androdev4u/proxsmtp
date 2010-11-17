@@ -903,7 +903,7 @@ static int should_skip_processing(spctx_t* ctx)
 {
 	if(ctx->authenticated && (g_state.skip & SKIP_AUTHENTICATED))
 	{
-		sp_messagex(ctx, LOG_DEBUG, "skipping data processing because client is authenticated");
+		sp_messagex(ctx, LOG_DEBUG, "skipping processing because client is authenticated");
 		return 1;
 	}
 	return 0;

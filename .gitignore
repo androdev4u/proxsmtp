@@ -24,3 +24,6 @@ Makefile.in
 /config.guess
 /autom4te.cache
 /aclocal.m4
+/0*-*.patch
+
+/doc/*.html

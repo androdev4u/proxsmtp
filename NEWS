@@ -1,3 +1,14 @@
+1.9 [2011-01-23]
+ - Fix build warnings.
+ - Fix problem on linux not detecting netfilter headers.
+ - Add true transparent proxying, where both client and server have no
+   knowledge of the proxy. Documented at the proxsmtp web page.
+ - Use capabilities to have transparent proxying without running as root.
+ - Implement a simple reject filter, so no scripts need to be run.
+ - Allow skipping of filtering for authenticated connections.
+ - Bump up the top number of simultaneous connections.
+ - Add client IP addresses to the log line.
+
 1.8 [2008-06-30]
  - Make the XFOWARD HELO available as a environment variable in scripts. [Glenn Matthys]
  - Send an RSET to the server after filter fails an email.

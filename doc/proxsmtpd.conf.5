@@ -79,7 +79,13 @@ The amount of time in seconds to wait for the
 .Ar FilterCommand
 to process email data.
 .Pp
-[ Default: 30 seconds ] 
+[ Default: 30 seconds ]
+.It Ar FilterReject
+The rejection message used when
+.Ar FilterType
+is set to 'reject'.
+.Pp
+[ Default: 530 Email Rejected ]
 .It Ar FilterType
 When set to 'pipe' the email data is piped through the 
 .Ar FilterCommand
@@ -89,6 +95,11 @@ to a file and the file name is passed to the
 using the 
 .Ar EMAIL
 environment variable.
+.Pp
+When set to 'reject' then email is immediately rejected using message defined
+by the
+.Ar FilterReject
+option.
 .Pp
 [ Default: pipe ]
 .It Ar Header
@@ -129,6 +140,11 @@ The address of the SMTP server to send email to once it's been scanned. See
 syntax of addreses below. 
 .Pp
 [ Required ]
+.It Ar Skip
+Whether to skip certain kinds of connections or email from running through
+the filter. Specify 'authenticated' to skip SMTP authenticated connections.
+.Pp
+[ Optional ]
 .It Ar TempDirectory
 The directory to write temp files to. 
 .Pp
@@ -140,10 +156,14 @@ The number of seconds to wait while reading data from network connections.
 .Pp
 [ Default: 180 seconds ]
 .It Ar TransparentProxy
-This option enables transparent proxy support, which allows you to route all 
-SMTP traffic that's going through a gateway through proxsmtp which will then 
-send it on to its final destination. This setup usually involves firewall 
+Setting this option to 'client' enables transparent proxy support, which allows
+you to route all SMTP traffic that's going through a gateway through proxsmtp which
+will then send it on to its final destination. This setup usually involves firewall
 rules which redirect traffic to proxsmtp, and the setup varies from OS to OS.
+.Pp
+Specify 'full' to enable a true transparent proxy where neither the client or
+server are aware of the proxy by way of the packet headers. This setup usually involves
+routers to redirect traffic to proxsmtp, and the setup varies from OS to OS.
 .Pp
 [ Default: off ]
 .It Ar User

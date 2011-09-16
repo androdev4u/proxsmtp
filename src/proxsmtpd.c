@@ -925,6 +925,11 @@ static int wait_process(spctx_t* sp, pid_t pid, int* status)
         switch(waitpid(pid, status, WNOHANG))
         {
         case 0:
+	    /* Linux may return 0 if the task has already terminated and was
+	     * caught by waitpid(-1) above, double check it still exists.
+	     */
+            if (kill(pid, 0) < 0 && errno == ESRCH)
+                return 0;
             break;
         case -1:
             if(errno != ECHILD && errno != ESRCH)

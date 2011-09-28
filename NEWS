@@ -1,5 +1,6 @@
 1.10 ???
  - Fix race issue with waitpid on linux.
+ - Close all (other than standard) file descriptors when forking filter.
 
 1.9 [2011-01-23]
  - Fix build warnings.

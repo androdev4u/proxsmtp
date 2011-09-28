@@ -425,6 +425,9 @@ static pid_t fork_filter(spctx_t* sp, int* infd, int* outfd, int* errfd)
             kill_myself();
         }
 
+	for (r = 3; r < FD_SETSIZE; ++r)
+		close(r);
+
         /* All the necessary environment vars */
         sp_setup_forked(sp, 1);
 

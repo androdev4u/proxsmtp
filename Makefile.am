@@ -19,10 +19,6 @@ dist-hook:
 	else \
 		echo A git clone is required to generate a ChangeLog >&2; \
 	fi
-	@if test -f $(srcdir)/$(FRESHMEAT); then \
-		grep -qF "$(PACKAGE_VERSION)" $(srcdir)/$(FRESHMEAT) || \
-			( echo "$(FRESHMEAT) release not updated" >&2; exit 1 ); \
-	fi
 
 upload-release: $(DIST_ARCHIVES)
 	gpg --detach-sign --local-user $(SIGNER) $(DIST_ARCHIVES)
@@ -30,3 +26,11 @@ upload-release: $(DIST_ARCHIVES)
 	@echo
 	@echo "# Remember to update $(UPLOAD)/index.html"
 
+upload-freshmeat:
+	@if test -f $(srcdir)/$(FRESHMEAT); then \
+		grep -qF "$(PACKAGE_VERSION)" $(srcdir)/$(FRESHMEAT) || \
+			( echo "$(FRESHMEAT) release not updated" >&2; exit 1 ); \
+	fi
+	freshmeat-submit < $(FRESHMEAT)
+
+release: upload-release upload-freshmeat

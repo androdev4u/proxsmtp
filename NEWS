@@ -1,4 +1,4 @@
-1.10 ???
+1.10 [2011-10-21]
  - Fix race issue with waitpid on linux.
  - Close all (other than standard) file descriptors when forking filter.
 

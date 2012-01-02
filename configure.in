@@ -88,6 +88,10 @@ AC_CHECK_HEADERS([linux/types.h linux/netfilter_ipv4.h],
 	]]
 )
 
+# Check for OpenBSD type transparent proxy support
+AC_CHECK_HEADERS([net/pfvar.h],
+	AC_DEFINE(USE_PF_NATLOOKUP, 1, [Whether the system supports OpenBSD packet filter for transparent proxy]),,)
+
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_SIZE_T
 

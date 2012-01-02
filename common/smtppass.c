@@ -73,6 +73,14 @@
 #include <sys/prctl.h>
 #endif
 
+#ifdef USE_PF_NATLOOKUP
+#include <sys/ioctl.h>
+
+#include <net/if.h>
+#include <netinet/in.h>
+#include <net/pfvar.h>
+#endif /* USE_PF_NATLOOKUP */
+
 #include "compat.h"
 #include "sock_any.h"
 #include "stringx.h"
@@ -801,6 +809,11 @@ static int make_connections(spctx_t* ctx, int client)
     const char* dstname;
     const char* srcname;
 
+#ifdef USE_PF_NATLOOKUP
+	struct pfioc_natlook nl;
+	int dev;
+#endif /* USE_PF_NATLOOKUP */
+
     ASSERT(client != -1);
 
     /* Setup the incoming connection. This also fills in peeraddr for us */
@@ -828,6 +841,40 @@ static int make_connections(spctx_t* ctx, int client)
             sp_message(ctx, LOG_ERR, "couldn't get source address for transparent proxying");
             return -1;
         }
+
+#ifdef USE_PF_NATLOOKUP
+	dev = open("/dev/pf", O_RDWR);
+	if (dev == -1) {
+		sp_message(ctx, LOG_ERR, "open(\"/dev/pf\") failed");
+		return -1;
+	}
+
+	memset(&nl, 0, sizeof(struct pfioc_natlook));
+
+	memcpy(&nl.saddr.v4.s_addr, &(peeraddr.s.in.sin_addr), sizeof(struct in_addr));
+	nl.sport = peeraddr.s.in.sin_port;
+
+	memcpy(&nl.daddr.v4.s_addr, &(addr.s.in.sin_addr), sizeof(struct in_addr));
+	nl.dport = addr.s.in.sin_port;
+
+	nl.af = AF_INET;
+	nl.proto = IPPROTO_TCP;
+
+	if (ioctl(dev, DIOCNATLOOK, &nl)) {
+		sp_message(ctx, LOG_ERR, "DIOCNATLOOK");
+		return -1;
+	}
+
+	if (close(dev) != 0) {
+		sp_message(ctx, LOG_ERR, "close(\"/dev/pf\") failed");
+		return -1;
+	}
+
+	memcpy(&(addr.s.in.sin_addr), &nl.rdaddr.v4.s_addr,
+		sizeof(struct in_addr));
+	addr.s.in.sin_port = nl.rdport;
+	addr.s.in.sin_family = AF_INET;
+#endif /* USE_PF_NATLOOKUP */
 
         /* Check address types */
         if(sock_any_cmp(&addr, &peeraddr, SANY_OPT_NOPORT) == 0)

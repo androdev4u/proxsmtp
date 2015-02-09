@@ -186,6 +186,14 @@ int spio_connect(spctx_t* ctx, spio_t* io, const struct sockaddr_any* sdst,
 			           GET_IO_NAME(io));
 			ssrc = NULL;
 		}
+#elif defined(HAVE_IP_BINDANY)
+		int value = 1;
+		if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) < 0 ||
+		   setsockopt(fd, IPPROTO_IP, IP_BINDANY, &value, sizeof(value)) < 0) {
+			sp_message(ctx, LOG_DEBUG, "%s: couldn't set transparent mode on connection",
+			           GET_IO_NAME(io));
+			ssrc = NULL;
+		}
 #else
 		/* Can't set source address on other OS */
 		sp_messagex(ctx, LOG_WARNING, "%s: couldn't set transparent mode on connection: not supported",

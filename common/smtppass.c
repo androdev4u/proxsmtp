@@ -358,6 +358,13 @@ int sp_run(const char* configfile, const char* pidfile, int dbg_level)
         if(setsockopt(sock, SOL_IP, IP_TRANSPARENT, &value, sizeof(value)) < 0)
             sp_message(NULL, LOG_WARNING, "couldn't set transparent mode on socket");
     }
+#elif HAVE_IP_BINDANY
+    if(g_state.transparent == TRANSPARENT_FULL)
+    {
+        int value = 1;
+        if(setsockopt(sock, IPPROTO_IP, IP_BINDANY, &value, sizeof(value)) < 0)
+            sp_message(NULL, LOG_WARNING, "couldn't set transparent mode on socket");
+    }
 #endif
 
     if(bind(sock, &SANY_ADDR(g_state.listenaddr), SANY_LEN(g_state.listenaddr)) != 0)
@@ -887,7 +894,7 @@ static int make_connections(spctx_t* ctx, int client)
     }
 
     if (g_state.transparent == TRANSPARENT_FULL) {
-#ifdef HAVE_IP_TRANSPARENT
+#if defined(HAVE_IP_TRANSPARENT) || defined(HAVE_IP_BINDANY)
         sock_any_cpy (&peersrc, &peeraddr, SANY_OPT_NOPORT);
         srcaddr = &peersrc;
         srcname = ctx->client.peername;
@@ -2233,7 +2240,7 @@ int sp_parse_option(const char* name, const char* value)
             }
             else if(strcasecmp(VAL_FULL, value) == 0)
             {
-#ifdef HAVE_IP_TRANSPARENT
+#if defined(HAVE_IP_TRANSPARENT) || defined(HAVE_IP_BINDANY)
                 g_state.transparent = TRANSPARENT_FULL;
 #else
                 errx(2, "invalid value for " CFG_TRANSPARENT

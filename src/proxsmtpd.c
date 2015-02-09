@@ -77,7 +77,8 @@ pxstate_t;
 enum {
 	FILTER_PIPE = 1,
 	FILTER_FILE = 2,
-	FILTER_REJECT = 3
+	FILTER_SMTP = 3,
+	FILTER_REJECT = 4
 };
 
 #define REJECTED            "Content Rejected"
@@ -96,6 +97,7 @@ enum {
 
 #define TYPE_PIPE           "pipe"
 #define TYPE_FILE           "file"
+#define TYPE_SMTP           "smtp"
 #define TYPE_REJECT         "reject"
 
 /* Poll time for waiting operations in milli seconds */
@@ -123,6 +125,7 @@ pxstate_t g_pxstate;
 static void usage();
 static int process_file_command(spctx_t* sp);
 static int process_pipe_command(spctx_t* sp);
+static int process_smtp_command(spctx_t* sp);
 static void final_reject_message(char* buf, int buflen);
 static void buffer_reject_message(char* data, char* buf, int buflen);
 static int kill_process(spctx_t* sp, pid_t pid);
@@ -270,6 +273,8 @@ int cb_check_data(spctx_t* ctx)
 
     if(g_pxstate.filter_type == FILTER_PIPE)
         r = process_pipe_command(ctx);
+    else if(g_pxstate.filter_type == FILTER_SMTP)
+        r = process_smtp_command(ctx);
     else
         r = process_file_command(ctx);
 
@@ -312,6 +317,8 @@ int cb_parse_option(const char* name, const char* value)
             g_pxstate.filter_type = FILTER_PIPE;
         else if(strcasecmp(value, TYPE_FILE) == 0)
             g_pxstate.filter_type = FILTER_FILE;
+        else if(strcasecmp(value, TYPE_SMTP) == 0)
+            g_pxstate.filter_type = FILTER_SMTP;
         else if(strcasecmp(value, TYPE_REJECT) == 0)
             g_pxstate.filter_type = FILTER_REJECT;
         else
@@ -611,6 +618,146 @@ cleanup:
         sp_add_log(sp, "status=", "FILTER-ERROR");
 
     return ret;
+}
+
+static int smtp_command(int s, char* data, char* resp, char** resp_data)
+{
+	char buf[1024];
+	int t;
+	if (send(s, data, strlen(data), 0) != strlen(data))
+		return -1;
+	if ((t=recv(s, buf, sizeof buf, 0)) > 0) {
+		buf[t] = '\0';
+		if (resp_data)
+			*resp_data = strdup(buf);
+		if (!resp || strncmp(buf, resp, strlen(resp)) == 0)
+			return 0;
+	}
+	return -1;
+}
+
+static int process_smtp_command(spctx_t* sp)
+{
+	int ret = 0;
+	int s = -1;
+	int fd = -1, t;
+	struct sockaddr_in remote;
+	char *last_line = NULL, *recipients = NULL;
+	char str[4096];
+
+	if(sp_cache_data(sp) == -1)
+		RETURN(-1); /* message already printed */
+
+	if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+		syslog(LOG_WARNING, "socket: %m");
+		RETURN(-1);
+	}
+
+	memset(&remote, 0, sizeof(struct sockaddr_in));
+	remote.sin_family = AF_INET;
+	remote.sin_port = htons(25);
+	remote.sin_addr.s_addr = inet_addr(g_pxstate.command);
+
+	if (connect(s, (struct sockaddr *)&remote, sizeof(struct sockaddr_in)) == -1) {
+		syslog(LOG_WARNING, "connect: %m");
+		RETURN(-1);
+	}
+
+	if (smtp_command(s, "", "220", NULL) == -1) {
+		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+		RETURN(-1);
+	}
+
+	snprintf(str, sizeof str, "EHLO proxsmtp\r\n");
+	if (smtp_command(s, str, "250", NULL) == -1) {
+		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+		RETURN(-1);
+	}
+
+	snprintf(str, sizeof str, "XCLIENT ADDR=%s\r\n", sp->client.peername);
+	if (smtp_command(s, str, "220", NULL) == -1) {
+		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+		RETURN(-1);
+	}
+
+	snprintf(str, sizeof str, "MAIL FROM: %s\r\n", sp->sender);
+	if (smtp_command(s, str, "250", NULL) == -1) {
+		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+		RETURN(-1);
+	}
+
+	char *r = recipients = strdup(sp->recipients);
+	char *token;
+	while ((token = strsep(&r, "\n")) != NULL) {
+		snprintf(str, sizeof str, "RCPT TO: %s\r\n", token);
+		if (smtp_command(s, str, "250", NULL) == -1) {
+			syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+			RETURN(-1);
+		}
+	}
+
+	snprintf(str, sizeof str, "DATA\r\n");
+	if (smtp_command(s, str, "354", NULL) == -1) {
+		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+		RETURN(-1);
+	}
+
+	if ((fd = open(sp->cachename, O_RDONLY)) == -1) {
+		syslog(LOG_WARNING, "open(%s): %m", sp->cachename);
+		RETURN(-1);
+	}
+
+	char buf[4096];
+	while ((t=read(fd, buf, sizeof buf)) > 0)
+		if (send(s, buf, t, 0) != t)
+			RETURN(-1);
+
+	snprintf(str, sizeof str, "\r\n.\r\n");
+	if (smtp_command(s, str, NULL, &last_line) == -1) {
+		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+		RETURN(-1);
+	}
+
+	snprintf(str, sizeof str, "QUIT\r\n");
+	if (smtp_command(s, str, "221", NULL) == -1) {
+		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+		RETURN(-1);
+	}
+
+	// we're not guaranteed to get msg in last read
+	char* accept = "250 2.0.0 OK:";
+	char* reject = "550 ";
+	char* defer = "421 ";
+	if (strncmp(last_line, accept, strlen(accept)) == 0) {
+		if (sp_done_data(sp, g_pxstate.header) == -1)
+			RETURN(-1); /* message already printed */
+		sp_add_log(sp, "status=", "FILTERED");
+
+	} else if (strncmp(last_line, reject, strlen(reject)) == 0) {
+		final_reject_message(last_line, strlen(last_line));
+		if (sp_fail_data(sp, last_line) == -1)
+			RETURN(-1); /* message already printed */
+		sp_add_log(sp, "status=", last_line);
+	} else if (strncmp(last_line, defer, strlen(defer)) == 0) {
+		final_reject_message(last_line, strlen(last_line));
+		if (sp_fail_data(sp, last_line) == -1)
+			RETURN(-1); /* message already printed */
+		sp_add_log(sp, "status=", last_line);
+	} else {
+		RETURN(-1);
+	}
+	ret = 0;
+
+cleanup:
+	if (ret < 0)
+		sp_add_log(sp, "status=", "FILTER-ERROR");
+	if (s != -1)
+		close(s);
+	if (fd != -1)
+		close(fd);
+	free(last_line);
+	free(recipients);
+	return ret;
 }
 
 static int process_pipe_command(spctx_t* sp)

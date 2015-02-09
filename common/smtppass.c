@@ -1178,6 +1178,8 @@ static int smtp_passthru(spctx_t* ctx)
              * as their domain name, and RFC 2821 allows us to use
              * an arbitrary but identifying string.
              */
+#if 0
+            /* Disable loopback protection, in order to be more transparent */
             if(first_rsp)
             {
                 first_rsp = 0;
@@ -1193,6 +1195,7 @@ static int smtp_passthru(spctx_t* ctx)
                     continue;
                 }
             }
+#endif
 
             if((p = get_successful_rsp(S_LINE, &cont)) != NULL)
             {
@@ -1209,9 +1212,16 @@ static int smtp_passthru(spctx_t* ctx)
 
                     sp_messagex(ctx, LOG_DEBUG, "intercepting host response");
 
+#if 1
+                    /* Send the line to the client */
+                    if(spio_write_data(ctx, &(ctx->client), S_LINE) == -1)
+                        RETURN(-1);
+#else
+                    /* Disable loopback protection, in order to be more transparent */
                     if(spio_write_data(ctx, &(ctx->client),
                            cont ? SMTP_EHLO_RSP : SMTP_HELO_RSP) == -1)
                         RETURN(-1);
+#endif
 
                     /* A new email so cleanup */
                     cleanup_context(ctx);

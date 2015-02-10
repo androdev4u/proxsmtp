@@ -718,33 +718,19 @@ static int process_smtp_command(spctx_t* sp)
 		RETURN(-1);
 	}
 
+	trim_end(last_line);
 	snprintf(str, sizeof str, "QUIT\r\n");
-	if (smtp_command(s, str, "221", NULL) == -1) {
-		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
-		RETURN(-1);
-	}
+	smtp_command(s, str, NULL, NULL);
 
-	// we're not guaranteed to get msg in last read
-	char* accept = "250 2.0.0 OK:";
-	char* reject = "550 ";
-	char* defer = "421 ";
+	const char* accept = "250 2.0.0 OK:";
 	if (strncmp(last_line, accept, strlen(accept)) == 0) {
 		if (sp_done_data(sp, g_pxstate.header) == -1)
 			RETURN(-1); /* message already printed */
 		sp_add_log(sp, "status=", "FILTERED");
-
-	} else if (strncmp(last_line, reject, strlen(reject)) == 0) {
-		final_reject_message(last_line, strlen(last_line));
-		if (sp_fail_data(sp, last_line) == -1)
-			RETURN(-1); /* message already printed */
-		sp_add_log(sp, "status=", last_line);
-	} else if (strncmp(last_line, defer, strlen(defer)) == 0) {
-		final_reject_message(last_line, strlen(last_line));
-		if (sp_fail_data(sp, last_line) == -1)
-			RETURN(-1); /* message already printed */
-		sp_add_log(sp, "status=", last_line);
 	} else {
-		RETURN(-1);
+		if (sp_fail_data(sp, last_line) == -1)
+			RETURN(-1); /* message already printed */
+		sp_add_log(sp, "status=", last_line);
 	}
 	ret = 0;
 

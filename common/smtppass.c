@@ -713,6 +713,12 @@ static void cleanup_context(spctx_t* ctx)
         ctx->cachename[0] = 0;
     }
 
+    if(ctx->helo)
+    {
+        free(ctx->helo);
+        ctx->helo = NULL;
+    }
+
     if(ctx->recipients)
     {
         free(ctx->recipients);
@@ -972,6 +978,7 @@ static int smtp_passthru(spctx_t* ctx)
     int neterror = 0;
 
     int first_rsp = 1;      /* The first 220 response from server to be filtered */
+    char* helo = NULL;
     int filter_host = 0;    /* Next response is 250 hostname, which we change */
     int auth_started = 0;   /* Started performing authentication */
 
@@ -1052,7 +1059,7 @@ static int smtp_passthru(spctx_t* ctx)
                      * sending of the data to the server, making the av check
                      * transparent
                      */
-
+		    if (helo) ctx->helo = strdup(helo);
                     if(cb_check_data(ctx) == -1)
                         RETURN(-1);
                 }
@@ -1073,6 +1080,10 @@ static int smtp_passthru(spctx_t* ctx)
              */
             else if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)))
             {
+                if (helo) free(helo);
+                char* _helo = helo = strdup(trim_start(C_LINE + KL(EHLO_CMD)));
+                strsep(&_helo, "\r\n\t ");
+
                 /* EHLO can have multline responses so we set a flag */
                 filter_host = 1;
             }
@@ -1084,6 +1095,10 @@ static int smtp_passthru(spctx_t* ctx)
              */
             else if(is_first_word(C_LINE, HELO_CMD, KL(HELO_CMD)))
             {
+                if (helo) free(helo);
+                char* _helo = helo = strdup(trim_start(C_LINE + KL(HELO_CMD)));
+                strsep(&_helo, "\r\n\t ");
+
                 sp_messagex(ctx, LOG_DEBUG, "XCLIENT support assumed");
                 xclient_sup = 1;
 
@@ -1358,6 +1373,7 @@ cleanup:
 
     if(!neterror && ret == -1 && spio_valid(&(ctx->client)))
        spio_write_data(ctx, &(ctx->client), SMTP_FAILED);
+    free(helo);
 
     return ret;
 }
@@ -2035,6 +2051,9 @@ void sp_setup_forked(spctx_t* ctx, int file)
 
     siginterrupt(SIGINT, 0);
     siginterrupt(SIGTERM, 0);
+
+    if(ctx->helo)
+        setenv("HELO", ctx->helo, 1);
 
     if(ctx->sender)
         setenv("SENDER", ctx->sender, 1);

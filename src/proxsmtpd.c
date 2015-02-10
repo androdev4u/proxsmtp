@@ -674,7 +674,10 @@ static int process_smtp_command(spctx_t* sp)
 		RETURN(-1);
 	}
 
-	snprintf(str, sizeof str, "XCLIENT ADDR=%s\r\n", sp->client.peername);
+	if (sp->helo)
+		snprintf(str, sizeof str, "XCLIENT ADDR=%s HELO=%s\r\n", sp->client.peername, sp->helo);
+	else
+		snprintf(str, sizeof str, "XCLIENT ADDR=%s\r\n", sp->client.peername);
 	if (smtp_command(s, str, "220", NULL) == -1) {
 		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
 		RETURN(-1);

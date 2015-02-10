@@ -622,9 +622,9 @@ cleanup:
 
 static int smtp_command(int s, char* data, char* resp, char** resp_data)
 {
-	char buf[1024];
+	char buf[4096];
 	int t;
-	if (send(s, data, strlen(data), 0) != strlen(data))
+	if (data && send(s, data, strlen(data), 0) != strlen(data))
 		return -1;
 	if ((t=recv(s, buf, sizeof buf, 0)) > 0) {
 		buf[t] = '\0';
@@ -663,7 +663,7 @@ static int process_smtp_command(spctx_t* sp)
 		RETURN(-1);
 	}
 
-	if (smtp_command(s, "", "220", NULL) == -1) {
+	if (smtp_command(s, NULL, "220", NULL) == -1) {
 		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
 		RETURN(-1);
 	}

@@ -1080,7 +1080,7 @@ static int smtp_passthru(spctx_t* ctx)
              */
             else if(is_first_word(C_LINE, EHLO_CMD, KL(EHLO_CMD)))
             {
-                if (helo) free(helo);
+                free(helo);
                 char* _helo = helo = strdup(trim_start(C_LINE + KL(EHLO_CMD)));
                 strsep(&_helo, "\r\n\t ");
 
@@ -1095,7 +1095,7 @@ static int smtp_passthru(spctx_t* ctx)
              */
             else if(is_first_word(C_LINE, HELO_CMD, KL(HELO_CMD)))
             {
-                if (helo) free(helo);
+                free(helo);
                 char* _helo = helo = strdup(trim_start(C_LINE + KL(HELO_CMD)));
                 strsep(&_helo, "\r\n\t ");
 

@@ -712,7 +712,7 @@ static int process_smtp_command(spctx_t* sp)
 		if (send(s, buf, t, 0) != t)
 			RETURN(-1);
 
-	snprintf(str, sizeof str, "\r\n.\r\n");
+	snprintf(str, sizeof str, ".\r\n");
 	if (smtp_command(s, str, NULL, &last_line) == -1) {
 		syslog(LOG_WARNING, "smtp_command(%s): %m", str);
 		RETURN(-1);

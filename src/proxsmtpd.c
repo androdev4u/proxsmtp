@@ -693,10 +693,19 @@ static int process_smtp_command(spctx_t* sp)
 	char *token;
 	while ((token = strsep(&r, "\n")) != NULL) {
 		snprintf(str, sizeof str, "RCPT TO: %s\r\n", token);
-		if (smtp_command(s, str, "250", NULL) == -1) {
-			syslog(LOG_WARNING, "smtp_command(%s): %m", str);
-			RETURN(-1);
+		if (smtp_command(s, str, "250", &last_line) == -1) {
+			if (!last_line) {
+				syslog(LOG_WARNING, "smtp_command(%s): %m", str);
+				RETURN(-1);
+			}
+			trim_end(last_line);
+			if (sp_fail_data(sp, last_line) == -1)
+				RETURN(-1); /* message already printed */
+			sp_add_log(sp, "status=", last_line);
+			RETURN(0);
 		}
+		free(last_line);
+		last_line = NULL;
 	}
 
 	snprintf(str, sizeof str, "DATA\r\n");

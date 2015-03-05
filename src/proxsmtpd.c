@@ -648,6 +648,11 @@ static int process_smtp_command(spctx_t* sp)
 	if(sp_cache_data(sp) == -1)
 		RETURN(-1); /* message already printed */
 
+	if (!sp->sender || !sp->recipients) {
+		syslog(LOG_WARNING, "missing sender or recipient");
+		RETURN(-1);
+	}
+
 	if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
 		syslog(LOG_WARNING, "socket: %m");
 		RETURN(-1);

@@ -94,7 +94,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
     {
 #ifdef HAVE_INET6
         if(opts & SANY_OPT_DEFINET6)
-            memcpy(&(any->s.in.sin6_addr), &in6addr_loopback, sizeof(struct in6_addr));
+            memcpy(&(any->s.in6.sin6_addr), &in6addr_loopback, sizeof(struct in6_addr));
         else
 #endif
             any->s.in.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -211,7 +211,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
     }
 
     any->s.in6.sin6_family = AF_INET6;
-    any->s.in6.sin6_port = htons((unsigned short)port <= 0 : defport : port);
+    any->s.in6.sin6_port = htons((unsigned short)port <= 0 ? defport : port);
 
     if(inet_pton(AF_INET6, buf, &(any->s.in6.sin6_addr)) >= 0)
       break;

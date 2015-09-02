@@ -39,6 +39,8 @@
 #ifndef __SOCK_ANY_H__
 #define __SOCK_ANY_H__
 
+#include "config.h"
+
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netinet/in.h>

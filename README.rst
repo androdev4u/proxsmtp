@@ -2,6 +2,8 @@ Transparent SMTP proxy http://wiki.halon.io/Proxy for Halon's email gateway, for
 
 Installation on Debian
 ----------------------
+::
+
   apt-get install libcap-dev
   sh autogen.sh
   make

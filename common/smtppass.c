@@ -854,7 +854,7 @@ static int make_connections(spctx_t* ctx, int client)
 #ifdef LINUX_NETFILTER
         int level = SOL_IP, optname = SO_ORIGINAL_DST;
 #ifdef HAVE_INET6
-        if (SANY_TYPE(*dstaddr) == AF_INET6) {
+        if (SANY_TYPE(peeraddr) == AF_INET6) {
                 level = IPPROTO_IPV6;
                 optname = IP6T_SO_ORIGINAL_DST;
         }

@@ -397,7 +397,7 @@ sock_any_cpy(struct sockaddr_any* dst, const struct sockaddr_any* src, int opts)
 #ifdef HAVE_INET6
 	case AF_INET6:
 		if(opts & SANY_OPT_NOPORT)
-			dst->s.in6.sin_port = 0;
+			dst->s.in6.sin6_port = 0;
 		break;
 #endif
 	default:

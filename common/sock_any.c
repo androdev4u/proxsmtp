@@ -165,7 +165,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
   do
   {
     #define IPV6_CHARS  "0123456789abcdefABCDEF:"
-    #define IPV6_MIN    3
+    #define IPV6_MIN    2
     #define IPV6_MAX    51
 
     int port = -1;
@@ -204,7 +204,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
         t++;
     }
 
-    if(t)
+    if(t && *t)
     {
       port = strtol(t, &t, 10);
       if(*t || port <= 0 || port >= 65536)

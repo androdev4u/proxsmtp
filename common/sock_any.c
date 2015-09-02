@@ -176,7 +176,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
       break;
 
     /* If it starts with a '[' then we can get port */
-    if(buf[0] == '[')
+    if(addr[0] == '[')
     {
       port = 0;
       addr++;
@@ -195,6 +195,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
       /* If had bracket, then needs to end with a bracket */
       if(port != 0 || buf[l] != ']')
         break;
+      buf[l] = '\0';
 
       /* Get the port out */
       t = buf + l + 1;
@@ -213,7 +214,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
     any->s.in6.sin6_family = AF_INET6;
     any->s.in6.sin6_port = htons((unsigned short)port <= 0 ? defport : port);
 
-    if(inet_pton(AF_INET6, buf, &(any->s.in6.sin6_addr)) >= 0)
+    if(inet_pton(AF_INET6, buf, &(any->s.in6.sin6_addr)) <= 0)
       break;
 
     any->namelen = sizeof(any->s.in6);

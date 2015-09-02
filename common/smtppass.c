@@ -40,6 +40,8 @@
 
 #define _GNU_SOURCE
 
+#include "config.h"
+
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -66,6 +68,10 @@
 #if LINUX_NETFILTER
 #include <linux/types.h>
 #include <linux/netfilter_ipv4.h>
+#ifdef HAVE_INET6
+#include <linux/if.h>
+#include <linux/netfilter_ipv6/ip6_tables.h>
+#endif
 #endif
 
 #ifdef HAVE_LIBCAP
@@ -846,7 +852,14 @@ static int make_connections(spctx_t* ctx, int client)
         SANY_LEN(addr) = sizeof(addr);
 
 #ifdef LINUX_NETFILTER
-        if(getsockopt(ctx->client.fd, SOL_IP, SO_ORIGINAL_DST, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
+        int level = SOL_IP, optname = SO_ORIGINAL_DST;
+#ifdef HAVE_INET6
+        if (SANY_TYPE(*dstaddr) == AF_INET6) {
+                level = IPPROTO_IPV6;
+                optname = IP6T_SO_ORIGINAL_DST;
+        }
+#endif
+        if(getsockopt(ctx->client.fd, level, optname, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
 #else
         if(getsockname(ctx->client.fd, &SANY_ADDR(addr), &SANY_LEN(addr)) == -1)
 #endif

@@ -164,7 +164,7 @@ int sock_any_pton(const char* addr, struct sockaddr_any* any, int opts)
 #ifdef HAVE_INET6
   do
   {
-    #define IPV6_CHARS  "0123456789:"
+    #define IPV6_CHARS  "0123456789abcdefABCDEF:"
     #define IPV6_MIN    3
     #define IPV6_MAX    51
 

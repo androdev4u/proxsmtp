@@ -919,13 +919,13 @@ static int make_connections(spctx_t* ctx, int client)
 
 #ifdef HAVE_INET6
     /* IPv6 loopback? */
-    else if(SANY_TYPE(*outaddr) == AF_INET6 &&
-            outaddr->s.in.in6.sin_addr.s_addr == 0)
+    else if(SANY_TYPE(*dstaddr) == AF_INET6 &&
+            IN6_IS_ADDR_LOOPBACK(&(dstaddr->s.in.in6.sin_addr)))
     {
         /* Use the incoming IP as the default */
         memcpy(&addr, &(g_state.outaddr), sizeof(addr));
-        memcpy(&(addr.s.in.sin6_addr), &(peeraddr.s.in.sin6_addr), sizeof(addr.s.in.sin6_addr));
-        outaddr = &addr;
+        memcpy(&(addr.s.in6.sin6_addr), &(peeraddr.s.in6.sin6_addr), sizeof(addr.s.in6.sin6_addr));
+        dstaddr = &addr;
     }
 #endif
 

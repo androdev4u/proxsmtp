@@ -2131,7 +2131,7 @@ static void vmessage(spctx_t* ctx, int level, int err,
         strerror_r(e, buf + len, MAX_MSGLEN - len); */
 
         sp_lock();
-            strncat(buf, strerror(e), MAX_MSGLEN);
+            strncat(buf, strerror(e), MAX_MSGLEN - strlen(buf) - 1);
         sp_unlock();
     }
 

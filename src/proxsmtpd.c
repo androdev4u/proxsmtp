@@ -373,7 +373,7 @@ static pid_t fork_filter(spctx_t* sp, int* infd, int* outfd, int* errfd)
 {
     pid_t pid;
     int ret = 0;
-    int r = 0;
+    int r = 0, open_max;
 
     /* Pipes for input, output, err */
     int pipe_i[2];
@@ -432,8 +432,9 @@ static pid_t fork_filter(spctx_t* sp, int* infd, int* outfd, int* errfd)
             kill_myself();
         }
 
-	for (r = 3; r < FD_SETSIZE; ++r)
-		close(r);
+        open_max = sysconf(_SC_OPEN_MAX);
+        for (r = 3; r < open_max; ++r)
+            close(r);
 
         /* All the necessary environment vars */
         sp_setup_forked(sp, 1);
@@ -519,7 +520,7 @@ static int process_file_command(spctx_t* sp)
         /* Select can modify the timeout argument so we copy */
         memcpy(&timeout, &(g_pxstate.timeout), sizeof(timeout));
 
-        r = select(FD_SETSIZE, &rmask, NULL, NULL, &timeout);
+        r = select(errfd + 1, &rmask, NULL, NULL, &timeout);
 
         switch(r)
         {
@@ -777,6 +778,7 @@ static int process_pipe_command(spctx_t* sp)
     fd_set wmask;
 
     /* For reading data from the process */
+    int nfds = -1;
     int outfd;
     int errfd;
     fd_set rmask;
@@ -805,17 +807,20 @@ static int process_pipe_command(spctx_t* sp)
         /* We only select on those that are still open */
         if(infd != -1)
             FD_SET(infd, &wmask);
+        nfds = infd > nfds ? infd : nfds;
 
         if(outfd != -1)
             FD_SET(outfd, &rmask);
+        nfds = outfd > nfds ? outfd : nfds;
 
         if(errfd != -1)
             FD_SET(errfd, &rmask);
+        nfds = errfd > nfds ? errfd : nfds;
 
         /* Select can modify the timeout argument so we copy */
         memcpy(&timeout, &(g_pxstate.timeout), sizeof(timeout));
 
-        r = select(FD_SETSIZE, &rmask, &wmask, NULL, &timeout);
+        r = select(nfds + 1, &rmask, &wmask, NULL, &timeout);
         switch(r)
         {
         case -1:

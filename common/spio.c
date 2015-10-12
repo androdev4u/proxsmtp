@@ -252,6 +252,7 @@ unsigned int spio_select(spctx_t* ctx, ...)
     int ret = 0;
     int have = 0;
     int i = 0;
+    int nfds = -1;
     va_list ap;
     struct timeval timeout;
 
@@ -274,6 +275,7 @@ unsigned int spio_select(spctx_t* ctx, ...)
 
             /* Mark for select */
             FD_SET(io->fd, &mask);
+            nfds = io->fd > nfds ? io->fd : nfds;
             have = 1;
         }
 
@@ -296,7 +298,7 @@ unsigned int spio_select(spctx_t* ctx, ...)
         memcpy(&timeout, &(g_state.timeout), sizeof(timeout));
 
         /* Otherwise wait on more data */
-        switch(select(FD_SETSIZE, &mask, NULL, NULL, &timeout))
+        switch(select(nfds + 1, &mask, NULL, NULL, &timeout))
         {
         case 0:
             sp_messagex(ctx, LOG_ERR, "network operation timed out");

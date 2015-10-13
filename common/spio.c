@@ -43,6 +43,7 @@
  * along with select IO multiplexing.
  */
 
+#include <sys/poll.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -55,7 +56,6 @@
 #include <fcntl.h>
 #include <syslog.h>
 #include <errno.h>
-#include <stdarg.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -245,60 +245,44 @@ void spio_disconnect(spctx_t* ctx, spio_t* io)
     }
 }
 
-unsigned int spio_select(spctx_t* ctx, ...)
+unsigned int spio_select(spctx_t* ctx, spio_t* client, spio_t* server)
 {
-    fd_set mask;
-    spio_t* io;
+    struct pollfd fds[2];
     int ret = 0;
-    int have = 0;
     int i = 0;
-    int nfds = -1;
-    va_list ap;
-    struct timeval timeout;
 
     ASSERT(ctx);
-    FD_ZERO(&mask);
 
-    va_start(ap, ctx);
+    if (spio_valid(client)) {
+        if(HAS_EXTRA(client))
+            ret |= (1 << 0);
 
-    while((io = va_arg(ap, spio_t*)) != NULL)
-    {
-        if(spio_valid(io))
-        {
-            /* We can't handle more than 31 args */
-            if(i > (sizeof(int) * 8) - 2)
-                break;
-
-            /* Check if the buffer has something in it */
-            if(HAS_EXTRA(io))
-                ret |= (1 << i);
-
-            /* Mark for select */
-            FD_SET(io->fd, &mask);
-            nfds = io->fd > nfds ? io->fd : nfds;
-            have = 1;
-        }
-
+        fds[i].fd = client->fd;
+        fds[i].events = POLLIN;
         i++;
     }
 
-    va_end(ap);
+    if (spio_valid(server)) {
+        if(HAS_EXTRA(server))
+            ret |= (1 << 1);
+
+        fds[i].fd = server->fd;
+        fds[i].events = POLLIN;
+        i++;
+    }
 
     /* If any buffers had something present, then return */
     if(ret != 0)
         return ret;
 
     /* No valid file descriptors */
-    if(!have)
+    if(i == 0)
         return ~0;
 
     for(;;)
     {
-        /* Select can modify the timeout argument so we copy */
-        memcpy(&timeout, &(g_state.timeout), sizeof(timeout));
-
         /* Otherwise wait on more data */
-        switch(select(nfds + 1, &mask, NULL, NULL, &timeout))
+        switch(poll((struct pollfd *)&fds, i, g_state.timeout.tv_sec * 1000))
         {
         case 0:
             sp_messagex(ctx, LOG_ERR, "network operation timed out");
@@ -321,30 +305,20 @@ unsigned int spio_select(spctx_t* ctx, ...)
     }
 
     /* See what came in */
-    i = 0;
-
-    va_start(ap, ctx);
-
-    while((io = va_arg(ap, spio_t*)) != NULL)
+    for (i--; i >= 0; i--)
     {
-        if(spio_valid(io))
-        {
-            /* We can't handle more than 31 args */
-            if(i > (sizeof(int) * 8) - 2)
-                break;
+        if (!(fds[i].revents & POLLIN))
+            continue;
 
-            /* We have data on the descriptor, which is an action */
-            io->last_action = time(NULL);
-
-            /* Check if the buffer has something in it */
-            if(FD_ISSET(io->fd, &mask))
-                ret |= (1 << i);
+        if (fds[i].fd == client->fd) {
+            client->last_action = time(NULL);
+            ret |= (1 << 0);
         }
-
-        i++;
+        if (fds[i].fd == server->fd) {
+            server->last_action = time(NULL);
+            ret |= (1 << 1);
+        }
     }
-
-    va_end(ap);
 
     return ret;
 }

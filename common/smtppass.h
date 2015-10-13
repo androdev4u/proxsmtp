@@ -108,7 +108,7 @@ int spio_write_data_raw(struct spctx* ctx, spio_t* io, const unsigned char* buf,
 void spio_read_junk(struct spctx* sp, spio_t* io);
 
 /* Pass up to 31 spio_t*, followed by NULL. Returns bitmap of ready for reading */
-unsigned int  spio_select(struct spctx* ctx, spio_t* client, spio_t* server);
+unsigned int  spio_select(struct spctx* ctx);
 
 
 /* -----------------------------------------------------------------------------

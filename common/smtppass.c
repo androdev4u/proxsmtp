@@ -1007,7 +1007,7 @@ static int smtp_passthru(spctx_t* ctx)
 
     while(!sp_is_quit())
     {
-        mask = spio_select(ctx, &(ctx->client), &(ctx->server));
+        mask = spio_select(ctx);
 
         if(mask == ~0)
         {

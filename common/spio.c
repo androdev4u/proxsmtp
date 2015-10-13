@@ -245,7 +245,7 @@ void spio_disconnect(spctx_t* ctx, spio_t* io)
     }
 }
 
-unsigned int spio_select(spctx_t* ctx, spio_t* client, spio_t* server)
+unsigned int spio_select(spctx_t* ctx)
 {
     struct pollfd fds[2];
     int ret = 0;
@@ -253,20 +253,20 @@ unsigned int spio_select(spctx_t* ctx, spio_t* client, spio_t* server)
 
     ASSERT(ctx);
 
-    if (spio_valid(client)) {
-        if(HAS_EXTRA(client))
+    if (spio_valid(&(ctx->client))) {
+        if(HAS_EXTRA(&(ctx->client)))
             ret |= (1 << 0);
 
-        fds[i].fd = client->fd;
+        fds[i].fd = ctx->client.fd;
         fds[i].events = POLLIN;
         i++;
     }
 
-    if (spio_valid(server)) {
-        if(HAS_EXTRA(server))
+    if (spio_valid(&(ctx->server))) {
+        if(HAS_EXTRA(&(ctx->server)))
             ret |= (1 << 1);
 
-        fds[i].fd = server->fd;
+        fds[i].fd = ctx->server.fd;
         fds[i].events = POLLIN;
         i++;
     }
@@ -310,12 +310,12 @@ unsigned int spio_select(spctx_t* ctx, spio_t* client, spio_t* server)
         if (!(fds[i].revents & POLLIN))
             continue;
 
-        if (fds[i].fd == client->fd) {
-            client->last_action = time(NULL);
+        if (fds[i].fd == ctx->client.fd) {
+            ctx->client.last_action = time(NULL);
             ret |= (1 << 0);
         }
-        if (fds[i].fd == server->fd) {
-            server->last_action = time(NULL);
+        if (fds[i].fd == ctx->server.fd) {
+            ctx->server.last_action = time(NULL);
             ret |= (1 << 1);
         }
     }

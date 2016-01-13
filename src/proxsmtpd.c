@@ -497,7 +497,7 @@ static int process_file_command(spctx_t* sp)
     struct timeval timeout;
 
     /* For reading data from the process */
-    int errfd;
+    int errfd = -1;
     fd_set rmask;
     char obuf[1024];
     char ebuf[256];

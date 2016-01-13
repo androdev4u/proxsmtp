@@ -482,7 +482,7 @@ int read_raw(spctx_t* ctx, spio_t* io, int opts)
             io->_ln = 0;
 
             /* Null terminate */
-            io->line[SP_LINE_LENGTH] = 0;
+            io->line[SP_LINE_LENGTH - 1] = 0;
 
             /* A double check on the return value */
             return count;

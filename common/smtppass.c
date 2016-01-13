@@ -1800,7 +1800,7 @@ int sp_done_data(spctx_t* ctx, const char *headertmpl)
     int ret = 0;
     char *line;
     char header[MAX_HEADER_LENGTH] = "";
-    size_t header_len, line_len;
+    size_t header_len = 0, line_len;
     int header_prepend = 0;
     ssize_t rc;
 

@@ -32,19 +32,26 @@ High volume
 -----------
 
 In order to handle many connections and high throughput, make sure that max open
-files is high enough and raise the ``MaxConnections`` setting. If disk IOPS becomes
-a bottleneck then a memory filesystem can be used.
+files is high enough and raise the ``MaxConnections`` setting.
 
 ::
 
  # grep nofile /etc/security/limits.conf 
- nobody           soft    nofile          10000
- nobody           hard    nofile          10000
  *                soft    nofile          10000
  *                hard    nofile          10000
  # ulimit -n 10000
  # grep MaxConnections /usr/local/etc/proxsmtpd.conf 
  MaxConnections: 3000
+
+If disk IOPS becomes a bottleneck then a memory filesystem can be used,
+or the write cache can be adjusted.
+
+::
+
  # grep tmpfs /etc/fstab
  tmpfs   /tmp         tmpfs   nodev,nosuid,size=2G          0  0
-
+ # grep sysctl /etc/rc.local
+ sysctl vm.dirty_background_ratio=50
+ sysctl vm.dirty_ratio=80
+ sysctl vm.dirty_expire_centisecs=30000
+ sysctl vm.dirty_writeback_centisecs=3000

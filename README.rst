@@ -43,15 +43,47 @@ files is high enough and raise the ``MaxConnections`` setting.
  # grep MaxConnections /usr/local/etc/proxsmtpd.conf 
  MaxConnections: 3000
 
-If disk IOPS becomes a bottleneck then a memory filesystem can be used,
-or the write cache can be adjusted.
+If disk IOPS becomes a bottleneck, you can use a memory filesystem
 
 ::
 
  # grep tmpfs /etc/fstab
  tmpfs   /tmp         tmpfs   nodev,nosuid,size=2G          0  0
+ 
+or increase the write cache size
+ 
+::
+ 
  # grep sysctl /etc/rc.local
  sysctl vm.dirty_background_ratio=50
  sysctl vm.dirty_ratio=80
  sysctl vm.dirty_expire_centisecs=30000
  sysctl vm.dirty_writeback_centisecs=3000
+
+Multiple Halon nodes
+--------------------
+
+The easiest way to have a transparent setup with multiple Halon nodes, is to install haproxy:
+
+::
+
+ # tail /etc/haproxy/haproxy.cfg
+ frontend localnodes
+        bind *:20025
+        mode tcp
+        default_backend halons
+ backend halons
+        mode tcp
+        balance roundrobin
+        option smtpchk
+        server out1 10.0.0.2:10025 check
+        server out2 10.0.0.3:10025 check
+
+and make proxsmtp connect to haproxy
+
+::
+
+ # grep htons proxsmtp/src/proxsmtpd.c
+	remote.sin_port = htons(20025);
+ # grep FilterCommand /usr/local/etc/proxsmtpd.conf 
+ FilterCommand: 127.0.0.1 

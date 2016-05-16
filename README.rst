@@ -26,7 +26,15 @@ Add the following to ``/etc/rc.local``
  echo 0 > /proc/sys/net/ipv4/conf/lo/rp_filter
  echo 1 > /proc/sys/net/ipv4/ip_forward
 
-and set the ``TransparentProxy`` setting to ``full``.
+and adjust the ``TransparentProxy`` and ``Listen`` settings accordingly:
+
+::
+
+ # head /usr/local/etc/proxsmtpd.conf
+ TransparentProxy: full
+ Listen: 0.0.0.0:10025
+ FilterType: smtp
+ FilterCommand: 192.168.0.100 # or 127.0.0.1 for haproxy
 
 High volume
 -----------
@@ -85,5 +93,6 @@ and make proxsmtp connect to haproxy
 
  # grep htons proxsmtp/src/proxsmtpd.c
 	remote.sin_port = htons(20025);
- # grep FilterCommand /usr/local/etc/proxsmtpd.conf 
- FilterCommand: 127.0.0.1 
+ # grep Filter /usr/local/etc/proxsmtpd.conf
+ FilterType: smtp
+ FilterCommand: 127.0.0.1

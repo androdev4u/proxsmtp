@@ -80,12 +80,17 @@ The easiest way to have a transparent setup with multiple Halon nodes, is to ins
         bind *:20025
         mode tcp
         default_backend halons
+        maxconn 3500 # sync with proxsmtpd
  backend halons
         mode tcp
         balance roundrobin
         option smtpchk
-        server out1 10.0.0.2:10025 check
-        server out2 10.0.0.3:10025 check
+        server out1 10.0.0.2:10025 maxconn 300 check
+        server out2 10.0.0.3:10025 maxconn 300 check
+        timeout connect        10s # just samething sane
+        timeout server          1m
+        timeout queue           1m
+
 
 and make proxsmtp connect to haproxy
 

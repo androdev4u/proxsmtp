@@ -1,4 +1,7 @@
-Transparent SMTP proxy http://wiki.halon.io/Proxy for Halon's email gateway, fork of http://thewalter.net/stef/software/proxsmtp/
+Transparent SMTP proxy for Halon's email gateway, forked from http://thewalter.net/stef/software/proxsmtp/
+
+- http://wiki.halon.io/Proxy
+- http://wiki.halon.io/Fully_transparent_outbound_anti-spam
 
 Installation on Debian
 ----------------------
@@ -15,6 +18,7 @@ Add the following to ``/etc/rc.local``
 ::
 
  modprobe nf_conntrack_ipv4
+ iptables -A INPUT -p tcp --syn --dport 25 -m connlimit --connlimit-above 50 -j REJECT --reject-with tcp-reset
  iptables -t mangle -N DIVERT
  iptables -t mangle -A DIVERT -j MARK --set-mark 0x01/0x01
  iptables -t mangle -A DIVERT -j ACCEPT

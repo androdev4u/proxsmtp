@@ -740,7 +740,7 @@ static int process_smtp_command(spctx_t* sp)
 	snprintf(str, sizeof str, "QUIT\r\n");
 	smtp_command(s, str, NULL, NULL);
 
-	const char* accept = "250 ";
+	const char* accept = "250";
 	if (strncmp(last_line, accept, strlen(accept)) == 0) {
 		if (sp_done_data(sp, g_pxstate.header) == -1)
 			RETURN(-1); /* message already printed */

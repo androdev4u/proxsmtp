@@ -1794,6 +1794,26 @@ static int make_header(spctx_t* ctx, const char* format_str, char* header)
     return l >= MAX_HEADER_LENGTH ? MAX_HEADER_LENGTH - 1 : l;
 }
 
+//#define HALON_REPORT_RATE "./rate.py"
+#ifdef HALON_REPORT_RATE
+int rate_report(char* entry)
+{
+       pid_t pid = fork();
+       if (pid == -1)
+       {
+               return -1;
+       }
+       if (pid == 0)
+       {
+               execl(HALON_REPORT_RATE, HALON_REPORT_RATE, entry, NULL);
+               _exit(EXIT_FAILURE);
+       }
+       int status;
+       waitpid(pid, &status, 0);
+       return 0;
+}
+#endif
+
 int sp_done_data(spctx_t* ctx, const char *headertmpl)
 {
     FILE* file = 0;
@@ -1908,6 +1928,14 @@ int sp_done_data(spctx_t* ctx, const char *headertmpl)
 
     if(spio_write_data(ctx, &(ctx->client), ctx->server.line) == -1)
         RETURN(-1);
+
+#ifdef HALON_REPORT_RATE
+    if (ctx->server.line[0] == '4' || ctx->server.line[0] == '5')
+    {
+       sp_messagex(ctx, LOG_DEBUG, "reporting delivery-failure rate");
+       rate_report(ctx->sender);
+    }
+#endif
 
 cleanup:
 

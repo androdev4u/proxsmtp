@@ -1,7 +1,6 @@
-Transparent SMTP proxy for Halon's email gateway, forked from http://thewalter.net/stef/software/proxsmtp/
+Transparent SMTP proxy for Halon's email gateway
 
-- http://wiki.halon.io/Proxy
-- http://wiki.halon.io/Fully_transparent_outbound_anti-spam
+Please read more on https://support.halon.io/hc/en-us/articles/360009690160-Implement-proxy-semi-or-fully-transparent
 
 Installation on Debian
 ----------------------

@@ -51,6 +51,7 @@ files is high enough and raise the ``MaxConnections`` setting.
  *                soft    nofile          10000
  *                hard    nofile          10000
  # ulimit -n 10000
+ # ulimit -s 1024 # lower stack size
  # grep MaxConnections /usr/local/etc/proxsmtpd.conf 
  MaxConnections: 3000
 
